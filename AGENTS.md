@@ -13,6 +13,7 @@ cargo test --release                                               # CPU
 - Stay on one profile and feature set. Switching (debug, or no `cuda`) rebuilds whisper.cpp from scratch, which takes minutes.
 - Live API tests are `#[ignore]`: `ELEVENLABS_API_KEY=... cargo test --release -- --ignored`, and `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for the screen readers. Without keys, say plainly which API paths were not exercised.
 - A quick end-to-end run without a keyboard: `timeout -s INT 3 ./target/release/rookey -vv` records 3 s and transcribes locally.
+- Windows can't be run here, only type-checked: `cargo install cargo-xwin` and `ninja` on PATH, then `XWIN_ACCEPT_LICENSE=1 CARGO_TARGET_DIR=<scratch> cargo xwin check --all-targets --target x86_64-pc-windows-msvc`. Say plainly that nothing Windows-only was run; the release workflow builds it for real.
 
 ## Layout
 
@@ -22,6 +23,11 @@ cargo test --release                                               # CPU
 | `src/reader.rs` | Screen terms: screenshot, then local OCR (tesseract) or a vision model (OpenAI, Claude) |
 | `src/models.rs` | Whisper model catalog, finding installed models, downloads |
 | `src/desktop.rs` | Hotkeys: detects niri or Hyprland, edits their config safely, validates with the compositor itself |
+| `src/hold.rs` | Hold to talk, tap to keep talking: the key logic both listeners share |
+| `src/listen.rs`, `src/listen_win.rs` | `rookey listen`: evdev and a systemd user service on Linux, the key state and the Run key on Windows. Same functions in both |
+| `src/win.rs` | The Windows calls: typing (SendInput), a key's state, whether a pid runs |
+| `install.sh`, `install.ps1` | Install the release build and nothing else; the model is picked in `rookey setup` |
+| `.github/workflows/release.yml`, `cliff.toml` | A `v*` tag builds every archive and writes the notes from Conventional Commits |
 | `src/ui.rs` | The `rookey ui` HTTP server: token, routes, state for the page, input checks, setup checks |
 | `src/ui/` | The page: `app.js` (arrow.js templates), `i18n.js` (every word, per language), `app.css`, the vendored `arrow.js`, fonts and icon, baked in with `include_bytes!` |
 
