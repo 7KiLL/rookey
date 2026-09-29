@@ -9,6 +9,12 @@ yap toggle     # 1st call: start recording. 2nd call: stop, transcribe, type int
 
 Env: `YAP_MODEL` (path to ggml model), `YAP_LANG` (default `auto`, or `en`, `de`, `ru`, `uk`...).
 
+Cloud backend (ElevenLabs Scribe, no local model needed):
+```
+YAP_BACKEND=elevenlabs ELEVENLABS_API_KEY=sk_... yap
+ELEVENLABS_API_KEY=sk_... cargo test -- --ignored   # live API test on a sample clip
+```
+
 ## Setup
 
 `./install.sh` does all of the below (picks cuda/metal/cpu). Manual steps:

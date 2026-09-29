@@ -65,25 +65,13 @@ fn cli() -> Res<()> {
 }
 
 fn run(toggle: bool) -> Res<String> {
-    let model = env::var_os("YAP_MODEL").map(PathBuf::from).unwrap_or_else(|| {
-        dirs::data_dir().unwrap_or_default().join("yap").join(DEFAULT_MODEL)
-    });
-    if !model.exists() {
-        return Err(format!(
-            "model not found: {}\nget it with:\n  mkdir -p {dir} && curl -L -o {path} \
-             https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{DEFAULT_MODEL}",
-            model.display(),
-            dir = model.parent().unwrap().display(),
-            path = model.display(),
-        )
-        .into());
-    }
-
+    let cloud = match env::var("YAP_BACKEND").as_deref() {
+        Err(_) | Ok("local") => false,
+        Ok("elevenlabs") => true,
+        Ok(b) => return Err(format!("unknown YAP_BACKEND {b:?} (local, elevenlabs)").into()),
+    };
     // Load the model while we record, so stopping feels instant.
-    whisper_rs::install_logging_hooks(); // silences whisper.cpp stderr spam
-    let loader = thread::spawn(move || {
-        WhisperContext::new_with_params(&model, WhisperContextParameters::default())
-    });
+    let loader = if cloud { None } else { Some(spawn_model_loader()?) };
 
     let (stop_tx, stop_rx) = mpsc::channel();
     // Enter stops too: Ctrl-C would also kill the other side of `yap | wl-copy`.
@@ -101,9 +89,85 @@ fn run(toggle: bool) -> Res<String> {
     let (samples, rate) = record_until(stop_rx, toggle)?;
     let audio = resample(&samples, rate, WHISPER_RATE);
 
-    let ctx = loader.join().map_err(|_| "model loader panicked")??;
     notify(toggle, "transcribing");
-    transcribe(&ctx, &audio)
+    match loader {
+        None => elevenlabs(&audio),
+        Some(loader) => transcribe(&loader.join().map_err(|_| "model loader panicked")??, &audio),
+    }
+}
+
+type Loader = thread::JoinHandle<Result<WhisperContext, whisper_rs::WhisperError>>;
+
+fn spawn_model_loader() -> Res<Loader> {
+    let model = env::var_os("YAP_MODEL").map(PathBuf::from).unwrap_or_else(|| {
+        dirs::data_dir().unwrap_or_default().join("yap").join(DEFAULT_MODEL)
+    });
+    if !model.exists() {
+        return Err(format!(
+            "model not found: {}\nget it with:\n  mkdir -p {dir} && curl -L -o {path} \
+             https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{DEFAULT_MODEL}",
+            model.display(),
+            dir = model.parent().unwrap().display(),
+            path = model.display(),
+        )
+        .into());
+    }
+    whisper_rs::install_logging_hooks(); // silences whisper.cpp stderr spam
+    Ok(thread::spawn(move || {
+        WhisperContext::new_with_params(&model, WhisperContextParameters::default())
+    }))
+}
+
+/// ElevenLabs Scribe batch API: upload the whole clip once recording stops.
+// ponytail: batch, not the realtime websocket; switch if the post-stop wait matters.
+fn elevenlabs(audio: &[f32]) -> Res<String> {
+    use ureq::unversioned::multipart::{Form, Part};
+
+    let key = env::var("ELEVENLABS_API_KEY")
+        .map_err(|_| "YAP_BACKEND=elevenlabs needs ELEVENLABS_API_KEY")?;
+    let lang = env::var("YAP_LANG").unwrap_or_default();
+    let wav = wav_bytes(audio);
+
+    let mut form = Form::new()
+        .text("model_id", "scribe_v2")
+        .part("file", Part::bytes(&wav).file_name("yap.wav"));
+    if !lang.is_empty() && lang != "auto" {
+        form = form.text("language_code", &lang);
+    }
+    let mut res = ureq::post("https://api.elevenlabs.io/v1/speech-to-text")
+        .header("xi-api-key", &key)
+        .config()
+        .http_status_as_error(false) // keep the error body, it says what went wrong
+        .build()
+        .send(form)?;
+    let body = res.body_mut().read_to_string()?;
+    if !res.status().is_success() {
+        return Err(format!("elevenlabs {}: {body}", res.status()).into());
+    }
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    Ok(json["text"].as_str().unwrap_or_default().trim().to_string())
+}
+
+/// 16-bit PCM mono WAV at WHISPER_RATE.
+fn wav_bytes(audio: &[f32]) -> Vec<u8> {
+    let data_len = (audio.len() * 2) as u32;
+    let mut w = Vec::with_capacity(44 + data_len as usize);
+    w.extend(b"RIFF");
+    w.extend((36 + data_len).to_le_bytes());
+    w.extend(b"WAVEfmt ");
+    w.extend(16u32.to_le_bytes()); // fmt chunk size
+    w.extend(1u16.to_le_bytes()); // PCM
+    w.extend(1u16.to_le_bytes()); // mono
+    w.extend(WHISPER_RATE.to_le_bytes());
+    w.extend((WHISPER_RATE * 2).to_le_bytes()); // byte rate
+    w.extend(2u16.to_le_bytes()); // block align
+    w.extend(16u16.to_le_bytes()); // bits per sample
+    w.extend(b"data");
+    w.extend(data_len.to_le_bytes());
+    for s in audio {
+        w.extend(((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).to_le_bytes());
+    }
+    w
 }
 
 /// Records mono f32 from the default input until `stop` fires. Returns (samples, sample_rate).
@@ -227,7 +291,41 @@ fn notify(toggle: bool, msg: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::resample;
+    use super::*;
+
+    /// Needs network + key: ELEVENLABS_API_KEY=... cargo test -- --ignored
+    /// Uses whisper.cpp's jfk.wav (16 kHz mono 16-bit), fetched to $TMPDIR.
+    #[test]
+    #[ignore]
+    fn elevenlabs_jfk() {
+        let path = env::temp_dir().join("jfk.wav");
+        if !path.exists() {
+            let ok = Command::new("curl")
+                .args(["-fsSL", "-o"])
+                .arg(&path)
+                .arg("https://github.com/ggml-org/whisper.cpp/raw/master/samples/jfk.wav")
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "download jfk.wav");
+        }
+        let bytes = fs::read(path).unwrap();
+        let audio: Vec<f32> = bytes[44..]
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / i16::MAX as f32)
+            .collect();
+        let text = elevenlabs(&audio).unwrap();
+        println!("{text}");
+        assert!(text.to_lowercase().contains("your country"), "{text}");
+    }
+
+    #[test]
+    fn wav_header() {
+        let w = wav_bytes(&[0.0, 1.0]);
+        assert_eq!(w.len(), 48);
+        assert_eq!(&w[..4], b"RIFF");
+        assert_eq!(&w[44..], &[0, 0, 0xff, 0x7f]);
+    }
 
     #[test]
     fn resample_48k_to_16k() {
