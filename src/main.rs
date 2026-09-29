@@ -21,13 +21,18 @@ type Res<T> = Result<T, Box<dyn std::error::Error>>;
 const WHISPER_RATE: u32 = 16_000;
 const DEFAULT_MODEL: &str = "ggml-large-v3-turbo.bin";
 
-static VERBOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// 0 quiet, 1 (-v) transcript text as it arrives, 2 (-vv) steps + timings, 3 (-vvv) every chunk.
+static VERBOSE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
-/// `-v` step log on stderr, timestamped from process start.
+fn verbosity() -> u8 {
+    VERBOSE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Log on stderr at the given verbosity level, timestamped from process start.
 macro_rules! vlog {
-    ($($arg:tt)*) => {
-        if VERBOSE.load(std::sync::atomic::Ordering::Relaxed) {
+    ($level:expr, $($arg:tt)*) => {
+        if verbosity() >= $level {
             let t = START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64();
             eprintln!("[{t:7.3}s] {}", format!($($arg)*));
         }
@@ -47,9 +52,15 @@ fn cli() -> Res<()> {
     for arg in env::args().skip(1) {
         match arg.as_str() {
             "toggle" => toggle = true,
-            "-v" | "--verbose" => VERBOSE.store(true, std::sync::atomic::Ordering::Relaxed),
+            // -v, -vv, -vvv (or repeated -v) raise the level
+            v if v.len() > 1 && v.starts_with('-') && v[1..].chars().all(|c| c == 'v') => {
+                VERBOSE.fetch_add(v.len() as u8 - 1, std::sync::atomic::Ordering::Relaxed);
+            }
+            "--verbose" => {
+                VERBOSE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             _ => {
-                eprintln!("usage: yap [-v] [toggle]");
+                eprintln!("usage: yap [-v|-vv|-vvv] [toggle]");
                 std::process::exit(2);
             }
         }
@@ -103,8 +114,8 @@ fn run(toggle: bool) -> Res<String> {
     };
     // Verbose logs every partial as its own line instead of rewriting one.
     let show_partials =
-        !toggle && std::io::stderr().is_terminal() && !VERBOSE.load(std::sync::atomic::Ordering::Relaxed);
-    vlog!("backend: {}", env::var("YAP_BACKEND").unwrap_or_else(|_| "local".into()));
+        !toggle && std::io::stderr().is_terminal() && verbosity() == 0;
+    vlog!(2, "backend: {}", env::var("YAP_BACKEND").unwrap_or_else(|_| "local".into()));
 
     let (stop_tx, stop_rx) = mpsc::channel();
     // Enter stops too: Ctrl-C would also kill the other side of `yap | wl-copy`.
@@ -161,10 +172,10 @@ fn spawn_model_loader() -> Res<Loader> {
         .into());
     }
     whisper_rs::install_logging_hooks(); // silences whisper.cpp stderr spam
-    vlog!("whisper: loading {} in background", model.display());
+    vlog!(2, "whisper: loading {} in background", model.display());
     Ok(thread::spawn(move || {
         let ctx = WhisperContext::new_with_params(&model, WhisperContextParameters::default());
-        vlog!("whisper: model loaded");
+        vlog!(2, "whisper: model loaded");
         ctx
     }))
 }
@@ -199,7 +210,7 @@ impl Realtime {
         if let Some(lang) = lang_code() {
             url += &format!("&language_code={lang}");
         }
-        vlog!("ws: connecting {url}");
+        vlog!(2, "ws: connecting {url}");
         let mut req = url.into_client_request()?;
         req.headers_mut().insert("xi-api-key", elevenlabs_key()?.parse()?);
         let (ws, res) = tungstenite::connect(req).map_err(|e| match e {
@@ -211,7 +222,7 @@ impl Realtime {
             .into(),
             e => Box::<dyn std::error::Error>::from(e),
         })?;
-        vlog!("ws: handshake done (HTTP {}), waiting for session_started", res.status());
+        vlog!(2, "ws: handshake done (HTTP {}), waiting for session_started", res.status());
         let mut rt = Realtime { ws, committed: String::new(), sent: 0 };
 
         // The server opens with session_started; anything else (bad key, quota) is an error.
@@ -220,7 +231,8 @@ impl Realtime {
         if first["message_type"] != "session_started" {
             return Err(format!("elevenlabs realtime: {first}").into());
         }
-        vlog!("<- session_started {}", first);
+        vlog!(2, "<- session_started {}", first["session_id"]);
+        vlog!(3, "   config {}", first["config"]);
         rt.set_read_timeout(Duration::from_millis(1))?; // from here on, reads are polls
         Ok(rt)
     }
@@ -242,6 +254,7 @@ impl Realtime {
         let msg = msg.to_string();
         self.sent += audio.len();
         vlog!(
+            3,
             "-> input_audio_chunk {:4} ms audio, {:6} B json, commit={commit} (total {:.2} s)",
             audio.len() * 1000 / WHISPER_RATE as usize,
             msg.len(),
@@ -263,7 +276,7 @@ impl Realtime {
     fn finish(mut self, show_partials: bool) -> Res<String> {
         self.send(&[], true)?;
         let t = std::time::Instant::now();
-        vlog!("waiting for committed_transcript...");
+        vlog!(2, "waiting for committed_transcript...");
         self.set_read_timeout(Duration::from_secs(10))?;
         loop {
             let msg = self.next()?.ok_or("elevenlabs realtime: timed out waiting for transcript")?;
@@ -271,9 +284,9 @@ impl Realtime {
                 break;
             }
         }
-        vlog!("commit round-trip {} ms", t.elapsed().as_millis());
+        vlog!(2, "commit round-trip {} ms", t.elapsed().as_millis());
         let _ = self.ws.close(None);
-        vlog!("ws: closed");
+        vlog!(2, "ws: closed");
         if show_partials {
             eprint!("\r\x1b[K"); // clear the partial line
         }
@@ -284,7 +297,11 @@ impl Realtime {
     fn handle(&mut self, msg: serde_json::Value, show_partials: bool) -> Res<bool> {
         let text = msg["text"].as_str().unwrap_or_default();
         let kind = msg["message_type"].as_str().unwrap_or_default();
-        vlog!("<- {kind}: {text:?}");
+        match kind {
+            "partial_transcript" => vlog!(1, "partial:   {text}"),
+            "committed_transcript" => vlog!(1, "committed: {text}"),
+            _ => vlog!(2, "<- {kind}: {text:?}"),
+        }
         match kind {
             "partial_transcript" if show_partials => eprint!("\r\x1b[K{text}"),
             "partial_transcript" | "session_started" => {}
@@ -338,7 +355,7 @@ fn elevenlabs(audio: &[f32]) -> Res<String> {
     if let Some(lang) = &lang {
         form = form.text("language_code", lang);
     }
-    vlog!("http: uploading {} KB wav to /v1/speech-to-text", wav.len() / 1024);
+    vlog!(2, "http: uploading {} KB wav to /v1/speech-to-text", wav.len() / 1024);
     let t = std::time::Instant::now();
     let mut res = ureq::post("https://api.elevenlabs.io/v1/speech-to-text")
         .header("xi-api-key", &key)
@@ -347,7 +364,7 @@ fn elevenlabs(audio: &[f32]) -> Res<String> {
         .build()
         .send(form)?;
     let body = res.body_mut().read_to_string()?;
-    vlog!("http: {} in {} ms", res.status(), t.elapsed().as_millis());
+    vlog!(2, "http: {} in {} ms", res.status(), t.elapsed().as_millis());
     if !res.status().is_success() {
         return Err(format!("elevenlabs {}: {body}", res.status()).into());
     }
@@ -389,6 +406,7 @@ fn record_until(
     let rate = config.sample_rate();
     let buf = Arc::new(Mutex::new(Vec::new()));
     vlog!(
+        2,
         "mic: {} ({} Hz, {} ch, {:?})",
         device.id().map(|id| id.to_string()).unwrap_or_else(|_| "?".into()),
         rate,
@@ -411,15 +429,15 @@ fn record_until(
         sent += chunk.len();
         // peak level tells you at a glance whether the mic is actually hearing you
         let peak = chunk.iter().fold(0f32, |m, s| m.max(s.abs()));
-        vlog!("mic: {:4} ms captured, peak {peak:.3}", chunk.len() * 1000 / rate as usize);
+        vlog!(3, "mic: {:4} ms captured, peak {peak:.3}", chunk.len() * 1000 / rate as usize);
         tick(&chunk, rate)?;
     }
     drop(stream);
-    vlog!("mic: stopped");
+    vlog!(2, "mic: stopped");
 
     let samples = std::mem::take(&mut *buf.lock().unwrap());
     tick(&samples[sent..], rate)?;
-    vlog!("recorded {:.2} s total", samples.len() as f64 / rate as f64);
+    vlog!(2, "recorded {:.2} s total", samples.len() as f64 / rate as f64);
     Ok((samples, rate))
 }
 
@@ -478,9 +496,9 @@ fn transcribe(ctx: &WhisperContext, audio: &[f32]) -> Res<String> {
     params.set_print_timestamps(false);
 
     let mut state = ctx.create_state()?;
-    vlog!("whisper: transcribing {:.2} s of audio", audio.len() as f64 / WHISPER_RATE as f64);
+    vlog!(2, "whisper: transcribing {:.2} s of audio", audio.len() as f64 / WHISPER_RATE as f64);
     state.full(params, audio)?;
-    vlog!("whisper: done");
+    vlog!(2, "whisper: done");
     let mut text = String::new();
     for seg in state.as_iter() {
         text.push_str(&seg.to_str_lossy()?);

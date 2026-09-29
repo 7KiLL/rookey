@@ -4,7 +4,7 @@ Local dictation. Records the mic, transcribes with whisper.cpp, prints or types 
 
 ```
 yap            # record until Enter, print transcript (pipe it: yap | wl-copy)
-yap -v         # verbose: timestamped log of every step (mic levels, ws messages, timings)
+yap -v         # show transcript text as it arrives (-vv: steps + timings, -vvv: every audio chunk)
 yap toggle     # 1st call: start recording. 2nd call: stop, transcribe, type into focused window
 ```
 
