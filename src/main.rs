@@ -1,10 +1,11 @@
 //! yap: record the mic, transcribe locally with whisper.cpp, print or type the text.
 //!
-//!   yap          record until Ctrl-C, print transcript to stdout
+//!   yap          record until Enter (or Ctrl-C), print transcript to stdout
 //!   yap toggle   first call starts recording, second call stops it and types the text
 //!
 //! Env: YAP_MODEL (ggml model path), YAP_LANG (default "auto").
 
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, mpsc};
@@ -58,7 +59,7 @@ fn cli() -> Res<()> {
     if toggle {
         type_text(&text)?;
     } else {
-        println!("{text}");
+        writeln!(std::io::stdout(), "{text}")?; // println! panics on a closed pipe
     }
     Ok(())
 }
@@ -85,6 +86,14 @@ fn run(toggle: bool) -> Res<String> {
     });
 
     let (stop_tx, stop_rx) = mpsc::channel();
+    // Enter stops too: Ctrl-C would also kill the other side of `yap | wl-copy`.
+    if !toggle && std::io::stdin().is_terminal() {
+        let tx = stop_tx.clone();
+        thread::spawn(move || {
+            let _ = std::io::stdin().read_line(&mut String::new());
+            let _ = tx.send(());
+        });
+    }
     ctrlc::set_handler(move || {
         let _ = stop_tx.send(());
     })?;
@@ -112,7 +121,7 @@ fn record_until(stop: mpsc::Receiver<()>, toggle: bool) -> Res<(Vec<f32>, u32)> 
     }?;
     stream.play()?;
     notify(toggle, "recording");
-    eprintln!("recording... (Ctrl-C to stop)");
+    eprintln!("recording... (Enter to stop)");
     stop.recv()?;
     drop(stream);
 
@@ -191,7 +200,6 @@ fn type_text(text: &str) -> Res<()> {
     #[cfg(target_os = "macos")]
     {
         // ponytail: paste via clipboard (keystroke mangles non-ASCII); clobbers the clipboard.
-        use std::io::Write;
         let mut pb = Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn()?;
         pb.stdin.take().unwrap().write_all(text.as_bytes())?;
         pb.wait()?;

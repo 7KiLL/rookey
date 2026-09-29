@@ -31,5 +31,5 @@ fi
 echo "building with features: ${FEATURES:-cpu}"
 cargo install --path . ${FEATURES:+--features "$FEATURES"}
 
-echo "done. try: yap   (talk, then Ctrl-C)"
+echo "done. try: yap   (talk, then Enter)"
 [ "$MODEL_NAME" = ggml-large-v3-turbo.bin ] || echo "set YAP_MODEL=\"$MODEL_DIR/$MODEL_NAME\""

@@ -3,7 +3,7 @@
 Local dictation. Records the mic, transcribes with whisper.cpp, prints or types the text.
 
 ```
-yap            # record until Ctrl-C, print transcript (pipe it: yap | wl-copy)
+yap            # record until Enter, print transcript (pipe it: yap | wl-copy)
 yap toggle     # 1st call: start recording. 2nd call: stop, transcribe, type into focused window
 ```
 
