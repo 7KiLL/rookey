@@ -7,8 +7,10 @@ description = "Local push-to-talk dictation: record, transcribe with whisper.cpp
 [dependencies]
 cpal = "0.18"
 ctrlc = { version = "3.5", features = ["termination"] }
+base64 = "0.23"
 dirs = "7"
 serde_json = "1"
+tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 ureq = { version = "3.4", features = ["multipart"] }
 whisper-rs = "0.16"
 

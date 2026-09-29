@@ -9,6 +9,7 @@ use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 use std::{env, fs, thread};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -64,14 +65,26 @@ fn cli() -> Res<()> {
     Ok(())
 }
 
+enum Backend {
+    Local(Loader),
+    ElevenLabs,
+    Realtime(Option<Realtime>), // connected on the first audio tick
+}
+
 fn run(toggle: bool) -> Res<String> {
-    let cloud = match env::var("YAP_BACKEND").as_deref() {
-        Err(_) | Ok("local") => false,
-        Ok("elevenlabs") => true,
-        Ok(b) => return Err(format!("unknown YAP_BACKEND {b:?} (local, elevenlabs)").into()),
+    let mut backend = match env::var("YAP_BACKEND").as_deref() {
+        // Load the model while we record, so stopping feels instant.
+        Err(_) | Ok("local") => Backend::Local(spawn_model_loader()?),
+        Ok("elevenlabs") => Backend::ElevenLabs,
+        Ok("elevenlabs-realtime") => Backend::Realtime(None),
+        Ok(b) => {
+            return Err(format!(
+                "unknown YAP_BACKEND {b:?} (local, elevenlabs, elevenlabs-realtime)"
+            )
+            .into());
+        }
     };
-    // Load the model while we record, so stopping feels instant.
-    let loader = if cloud { None } else { Some(spawn_model_loader()?) };
+    let show_partials = !toggle && std::io::stderr().is_terminal();
 
     let (stop_tx, stop_rx) = mpsc::channel();
     // Enter stops too: Ctrl-C would also kill the other side of `yap | wl-copy`.
@@ -86,13 +99,28 @@ fn run(toggle: bool) -> Res<String> {
         let _ = stop_tx.send(());
     })?;
 
-    let (samples, rate) = record_until(stop_rx, toggle)?;
-    let audio = resample(&samples, rate, WHISPER_RATE);
+    // Realtime streams each chunk as it's recorded; the others wait for the whole clip.
+    let (samples, rate) = record_until(stop_rx, toggle, |chunk, rate| {
+        if let Backend::Realtime(rt) = &mut backend {
+            let rt = match rt {
+                Some(rt) => rt,
+                None => rt.insert(Realtime::connect()?),
+            };
+            rt.send(&resample(chunk, rate, WHISPER_RATE), false)?;
+            rt.poll(show_partials)?;
+        }
+        Ok(())
+    })?;
 
     notify(toggle, "transcribing");
-    match loader {
-        None => elevenlabs(&audio),
-        Some(loader) => transcribe(&loader.join().map_err(|_| "model loader panicked")??, &audio),
+    let audio = resample(&samples, rate, WHISPER_RATE);
+    match backend {
+        Backend::Local(loader) => {
+            transcribe(&loader.join().map_err(|_| "model loader panicked")??, &audio)
+        }
+        Backend::ElevenLabs => elevenlabs(&audio),
+        Backend::Realtime(Some(rt)) => rt.finish(show_partials),
+        Backend::Realtime(None) => Ok(String::new()), // stopped before the first tick
     }
 }
 
@@ -118,21 +146,156 @@ fn spawn_model_loader() -> Res<Loader> {
     }))
 }
 
+fn elevenlabs_key() -> Res<String> {
+    Ok(env::var("ELEVENLABS_API_KEY").map_err(|_| "ElevenLabs backends need ELEVENLABS_API_KEY")?)
+}
+
+/// YAP_LANG for the API, None = auto-detect.
+fn lang_code() -> Option<String> {
+    env::var("YAP_LANG").ok().filter(|l| !l.is_empty() && l != "auto")
+}
+
+type Ws = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
+
+/// ElevenLabs Scribe realtime: audio streams over a websocket while you talk,
+/// so on stop only a commit round-trip is left.
+struct Realtime {
+    ws: Ws,
+    committed: String,
+}
+
+impl Realtime {
+    fn connect() -> Res<Self> {
+        use tungstenite::client::IntoClientRequest;
+
+        let mut url = format!(
+            "wss://api.elevenlabs.io/v1/speech-to-text/realtime\
+             ?model_id=scribe_v2_realtime&audio_format=pcm_{WHISPER_RATE}"
+        );
+        if let Some(lang) = lang_code() {
+            url += &format!("&language_code={lang}");
+        }
+        let mut req = url.into_client_request()?;
+        req.headers_mut().insert("xi-api-key", elevenlabs_key()?.parse()?);
+        let (ws, _) = tungstenite::connect(req).map_err(|e| match e {
+            tungstenite::Error::Http(res) => format!(
+                "elevenlabs realtime {}: {}",
+                res.status(),
+                String::from_utf8_lossy(res.body().as_deref().unwrap_or_default())
+            )
+            .into(),
+            e => Box::<dyn std::error::Error>::from(e),
+        })?;
+        let mut rt = Realtime { ws, committed: String::new() };
+
+        // The server opens with session_started; anything else (bad key, quota) is an error.
+        rt.set_read_timeout(Duration::from_secs(10))?;
+        let first = rt.next()?.ok_or("elevenlabs realtime: no session_started")?;
+        if first["message_type"] != "session_started" {
+            return Err(format!("elevenlabs realtime: {first}").into());
+        }
+        rt.set_read_timeout(Duration::from_millis(1))?; // from here on, reads are polls
+        Ok(rt)
+    }
+
+    /// Sends 16 kHz mono audio. `commit` asks the server to finalize what it has.
+    fn send(&mut self, audio: &[f32], commit: bool) -> Res<()> {
+        use base64::Engine;
+
+        let pcm: Vec<u8> = audio
+            .iter()
+            .flat_map(|s| ((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).to_le_bytes())
+            .collect();
+        let msg = serde_json::json!({
+            "message_type": "input_audio_chunk",
+            "audio_base_64": base64::engine::general_purpose::STANDARD.encode(pcm),
+            "commit": commit,
+            "sample_rate": WHISPER_RATE,
+        });
+        self.ws.send(tungstenite::Message::text(msg.to_string()))?;
+        Ok(())
+    }
+
+    /// Handles whatever the server has sent so far, without blocking.
+    fn poll(&mut self, show_partials: bool) -> Res<()> {
+        while let Some(msg) = self.next()? {
+            self.handle(msg, show_partials)?;
+        }
+        Ok(())
+    }
+
+    /// Commits the rest and waits for the final transcript.
+    fn finish(mut self, show_partials: bool) -> Res<String> {
+        self.send(&[], true)?;
+        self.set_read_timeout(Duration::from_secs(10))?;
+        loop {
+            let msg = self.next()?.ok_or("elevenlabs realtime: timed out waiting for transcript")?;
+            if self.handle(msg, show_partials)? {
+                break;
+            }
+        }
+        let _ = self.ws.close(None);
+        if show_partials {
+            eprint!("\r\x1b[K"); // clear the partial line
+        }
+        Ok(self.committed.trim().to_string())
+    }
+
+    /// Returns true on a committed transcript.
+    fn handle(&mut self, msg: serde_json::Value, show_partials: bool) -> Res<bool> {
+        let text = msg["text"].as_str().unwrap_or_default();
+        match msg["message_type"].as_str().unwrap_or_default() {
+            "partial_transcript" if show_partials => eprint!("\r\x1b[K{text}"),
+            "partial_transcript" | "session_started" => {}
+            "committed_transcript" => {
+                self.committed.push(' ');
+                self.committed.push_str(text);
+                return Ok(true);
+            }
+            t if t.contains("error") || msg.get("error").is_some() => {
+                return Err(format!("elevenlabs realtime: {msg}").into());
+            }
+            _ => eprintln!("elevenlabs realtime: unexpected {msg}"),
+        }
+        Ok(false)
+    }
+
+    /// Next JSON message, or None if nothing arrived within the read timeout.
+    fn next(&mut self) -> Res<Option<serde_json::Value>> {
+        use std::io::ErrorKind::{TimedOut, WouldBlock};
+        match self.ws.read() {
+            Ok(tungstenite::Message::Text(t)) => Ok(Some(serde_json::from_str(&t)?)),
+            Ok(tungstenite::Message::Close(f)) => Err(format!("elevenlabs realtime closed: {f:?}").into()),
+            Ok(_) => Ok(None), // ping/pong, answered by tungstenite
+            Err(tungstenite::Error::Io(e)) if matches!(e.kind(), WouldBlock | TimedOut) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn set_read_timeout(&mut self, d: Duration) -> Res<()> {
+        use tungstenite::stream::MaybeTlsStream;
+        match self.ws.get_mut() {
+            MaybeTlsStream::Plain(s) => s.set_read_timeout(Some(d))?,
+            MaybeTlsStream::Rustls(s) => s.sock.set_read_timeout(Some(d))?,
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
 /// ElevenLabs Scribe batch API: upload the whole clip once recording stops.
-// ponytail: batch, not the realtime websocket; switch if the post-stop wait matters.
 fn elevenlabs(audio: &[f32]) -> Res<String> {
     use ureq::unversioned::multipart::{Form, Part};
 
-    let key = env::var("ELEVENLABS_API_KEY")
-        .map_err(|_| "YAP_BACKEND=elevenlabs needs ELEVENLABS_API_KEY")?;
-    let lang = env::var("YAP_LANG").unwrap_or_default();
+    let key = elevenlabs_key()?;
     let wav = wav_bytes(audio);
 
     let mut form = Form::new()
         .text("model_id", "scribe_v2")
         .part("file", Part::bytes(&wav).file_name("yap.wav"));
-    if !lang.is_empty() && lang != "auto" {
-        form = form.text("language_code", &lang);
+    let lang = lang_code();
+    if let Some(lang) = &lang {
+        form = form.text("language_code", lang);
     }
     let mut res = ureq::post("https://api.elevenlabs.io/v1/speech-to-text")
         .header("xi-api-key", &key)
@@ -171,7 +334,12 @@ fn wav_bytes(audio: &[f32]) -> Vec<u8> {
 }
 
 /// Records mono f32 from the default input until `stop` fires. Returns (samples, sample_rate).
-fn record_until(stop: mpsc::Receiver<()>, toggle: bool) -> Res<(Vec<f32>, u32)> {
+/// `tick` gets each new chunk (~250 ms, at the device rate) while recording, then the tail.
+fn record_until(
+    stop: mpsc::Receiver<()>,
+    toggle: bool,
+    mut tick: impl FnMut(&[f32], u32) -> Res<()>,
+) -> Res<(Vec<f32>, u32)> {
     let device = cpal::default_host().default_input_device().ok_or("no input device")?;
     let config = device.default_input_config()?;
     let rate = config.sample_rate();
@@ -186,10 +354,16 @@ fn record_until(stop: mpsc::Receiver<()>, toggle: bool) -> Res<(Vec<f32>, u32)> 
     stream.play()?;
     notify(toggle, "recording");
     eprintln!("recording... (Enter to stop)");
-    stop.recv()?;
+    let mut sent = 0;
+    while let Err(mpsc::RecvTimeoutError::Timeout) = stop.recv_timeout(Duration::from_millis(250)) {
+        let chunk = buf.lock().unwrap()[sent..].to_vec();
+        sent += chunk.len();
+        tick(&chunk, rate)?;
+    }
     drop(stream);
 
     let samples = std::mem::take(&mut *buf.lock().unwrap());
+    tick(&samples[sent..], rate)?;
     Ok((samples, rate))
 }
 
@@ -298,6 +472,28 @@ mod tests {
     #[test]
     #[ignore]
     fn elevenlabs_jfk() {
+        let text = elevenlabs(&jfk()).unwrap();
+        println!("{text}");
+        assert!(text.to_lowercase().contains("your country"), "{text}");
+    }
+
+    /// Streams in 250 ms chunks at real-time pace, like the mic loop does.
+    #[test]
+    #[ignore]
+    fn elevenlabs_realtime_jfk() {
+        let mut rt = Realtime::connect().unwrap();
+        for chunk in jfk().chunks(WHISPER_RATE as usize / 4) {
+            rt.send(chunk, false).unwrap();
+            rt.poll(true).unwrap();
+            thread::sleep(Duration::from_millis(250));
+        }
+        let t = std::time::Instant::now();
+        let text = rt.finish(false).unwrap();
+        println!("{text}\n(commit round-trip {:?})", t.elapsed());
+        assert!(text.to_lowercase().contains("your country"), "{text}");
+    }
+
+    fn jfk() -> Vec<f32> {
         let path = env::temp_dir().join("jfk.wav");
         if !path.exists() {
             let ok = Command::new("curl")
@@ -310,13 +506,10 @@ mod tests {
             assert!(ok, "download jfk.wav");
         }
         let bytes = fs::read(path).unwrap();
-        let audio: Vec<f32> = bytes[44..]
+        bytes[44..]
             .chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / i16::MAX as f32)
-            .collect();
-        let text = elevenlabs(&audio).unwrap();
-        println!("{text}");
-        assert!(text.to_lowercase().contains("your country"), "{text}");
+            .collect()
     }
 
     #[test]
