@@ -1,0 +1,32 @@
+# Release notes from Conventional Commits (git-cliff). The release workflow runs it for the
+# newest tag; `git cliff -o CHANGELOG.md` writes the whole history.
+
+[changelog]
+header = "# Changelog\n"
+body = """
+{% if version %}## {{ version | trim_start_matches(pat="v") }} ({{ timestamp | date(format="%Y-%m-%d") }}){% else %}## Unreleased{% endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{{ commit.message | upper_first }}{% if commit.breaking %} (breaking){% endif %}\
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+commit_parsers = [
+  { message = "^feat", group = "<!-- 0 -->Added" },
+  { message = "^fix", group = "<!-- 1 -->Fixed" },
+  { message = "^perf", group = "<!-- 2 -->Faster" },
+  { message = "^refactor", group = "<!-- 3 -->Changed" },
+  { message = "^doc", group = "<!-- 4 -->Docs" },
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^(chore|ci|test|style|build)", skip = true },
+]
+filter_commits = false
+tag_pattern = "v[0-9].*"
+sort_commits = "oldest"

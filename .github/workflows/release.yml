@@ -1,0 +1,89 @@
+# Push a tag like v0.1.0 and this builds every release archive, writes the notes from the
+# Conventional Commits since the last tag (cliff.toml), and publishes the GitHub release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: x86_64-linux, os: ubuntu-22.04 }
+          - { name: x86_64-linux-cuda, os: ubuntu-22.04, features: cuda }
+          - { name: aarch64-macos, os: macos-15, features: metal }
+          - { name: x86_64-windows, os: windows-2022 }
+          - { name: x86_64-windows-cuda, os: windows-2022, features: cuda }
+    runs-on: ${{ matrix.os }}
+    env:
+      # no GPU on the runner to ask: Turing (RTX 20) and newer, plus PTX for what comes next
+      CUDAARCHS: 75-real;86-real;89-real;120-virtual
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libclang-dev cmake
+      - name: CUDA
+        if: matrix.features == 'cuda'
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: "13.3.1"
+
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
+
+      - name: Package (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          tar -czf dist/rookey-${{ matrix.name }}.tar.gz -C target/release rookey
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist, pack | Out-Null
+          Copy-Item target/release/rookey.exe pack/
+          if ("${{ matrix.features }}" -eq "cuda") {
+            # users have the NVIDIA driver, not the toolkit: the runtime goes in the zip
+            Get-ChildItem -Recurse "$env:CUDA_PATH\bin" -Include cudart64_*.dll, cublas64_*.dll, cublasLt64_*.dll |
+              Copy-Item -Destination pack/
+          }
+          Compress-Archive -Path pack/* -DestinationPath dist/rookey-${{ matrix.name }}.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rookey-${{ matrix.name }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the notes read every commit since the last tag
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: NOTES.md
+      - uses: softprops/action-gh-release@v3
+        with:
+          body_path: NOTES.md
+          files: |
+            dist/*
+            install.sh
+            install.ps1
