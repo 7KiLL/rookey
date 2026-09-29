@@ -14,7 +14,7 @@ use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, LazyLock, Mutex, RwLock, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{env, fs, thread};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -719,7 +719,8 @@ fn wav_bytes(audio: &[f32]) -> Vec<u8> {
 }
 
 /// Records mono f32 from the default input until `stop` fires. Returns (samples, sample_rate).
-/// `tick` gets each new chunk (~250 ms, at the device rate) while recording, then the tail.
+/// `tick` gets each new chunk (~250 ms, at the device rate) while recording, then the tail
+/// with `last` set.
 fn record_until(
     stop: mpsc::Receiver<()>,
     mode: Mode,

@@ -128,3 +128,7 @@ hl.bind("SUPER + SHIFT + D", hl.dsp.exec_cmd("rookey toggle"))
 ```
 
 macOS: bind `rookey toggle` with skhd/Raycast/Shortcuts. The calling app needs Accessibility permission (it pastes via Cmd+V).
+
+## Development
+
+`just` lists the commands: `just install` builds, replaces `~/.local/bin/rookey` and restarts the hotkey listener, `just ui` does that and opens a fresh settings page, `just logs` follows the listener. `FEATURES=` builds without CUDA, `FEATURES=metal` for macOS.
