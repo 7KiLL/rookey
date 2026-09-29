@@ -11,6 +11,8 @@ Env: `YAP_MODEL` (path to ggml model), `YAP_LANG` (default `auto`, or `en`, `de`
 
 ## Setup
 
+`./install.sh` does all of the below (picks cuda/metal/cpu). Manual steps:
+
 Needs cmake + a C/C++ compiler (whisper.cpp is built from source).
 
 ```
