@@ -1,0 +1,1152 @@
+/* rookey settings. A stenographer's pad: green-tinted paper, a red centre rule,
+   and a proofreader's red pencil for whatever rookey changes in what you said. */
+
+@font-face {
+  font-family: "Commissioner";
+  src: url("/font/commissioner-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: block;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Commissioner";
+  src: url("/font/commissioner-cyrillic.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: block;
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Martian Mono";
+  src: url("/font/martian-mono-latin.woff2") format("woff2");
+  font-weight: 100 800;
+  font-stretch: 75% 112.5%;
+  font-display: block;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Martian Mono";
+  src: url("/font/martian-mono-cyrillic.woff2") format("woff2");
+  font-weight: 100 800;
+  font-stretch: 75% 112.5%;
+  font-display: block;
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+:root {
+  --paper: #E8EFDF;
+  --paper-raised: #F6F9EF;
+  --ink: #17231E;
+  --ink-soft: #4A5B52;
+  --rule: #B5C9B4;
+  --red: #C0342B;
+  --ink-hover: #2C3D36;
+  --red-hover: #A32A22;
+  --ok: #2F6B4F;
+  color-scheme: light;
+
+  /* voice is the sans, anything literally typed is the mono */
+  --voice: "Commissioner", system-ui, sans-serif;
+  --keys: "Martian Mono", ui-monospace, monospace;
+
+  --gutter: 3.5rem;
+  --column: 33rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #121A16;
+    --paper-raised: #1B2621;
+    --ink: #E4ECDD;
+    --ink-soft: #9DB0A3;
+    --rule: #2F4137;
+    --red: #F0645A;
+    --ink-hover: #C9D6C4;
+    --red-hover: #D9544B;
+    --ok: #7FC39B;
+    color-scheme: dark;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  /* Commissioner's flare axis gives the strokes a pen-cut ending */
+  font-variation-settings: "FLAR" var(--flare, 70), "VOLM" 0, "slnt" var(--slant, 0);
+}
+
+html {
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 1rem/1.5 var(--voice);
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* a link to a section lands with some air above its heading */
+h2 {
+  scroll-margin-top: 2rem;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+pre,
+ul {
+  margin: 0;
+}
+
+ul {
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: inherit;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+code,
+pre,
+.typed-input {
+  font-family: var(--keys);
+  font-stretch: 87%;
+  font-size: 0.8125em;
+}
+
+/* ---- the pad ---------------------------------------------------------- */
+
+.pad {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+}
+
+.top,
+.settings {
+  grid-column: 1;
+  justify-self: end;
+  width: 100%;
+  max-width: calc(var(--column) + var(--gutter) * 2);
+}
+
+.top {
+  padding: 4rem var(--gutter) 3.5rem;
+}
+
+.settings {
+  padding: 0 var(--gutter) 6rem;
+}
+
+.specimen {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  border-left: 2px solid var(--red);
+  padding: 0 var(--gutter);
+}
+
+.specimen-inner {
+  position: sticky;
+  top: 0;
+  max-width: var(--column);
+  padding: 4rem 0 3rem;
+}
+
+/* ---- header ----------------------------------------------------------- */
+
+h1 {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 1.5rem;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+}
+
+.mark {
+  --flare: 100;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.status {
+  margin-top: 0.5rem;
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+}
+
+.status.is-problem {
+  color: var(--red);
+}
+
+/* ---- groups ----------------------------------------------------------- */
+
+.group {
+  border-top: 1px solid var(--rule);
+  padding: 1.75rem 0 2.75rem;
+}
+
+h2 {
+  --flare: 100;
+  font-size: 1.3125rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.about {
+  margin-top: 0.25rem;
+  color: var(--ink-soft);
+  max-width: 30rem;
+}
+
+.about code,
+.choice-about code {
+  color: var(--ink);
+}
+
+h2 + .switch {
+  margin-top: 0.75rem;
+}
+
+.about + .choices,
+.about + .chips,
+.about + .switch {
+  margin-top: 1.25rem;
+}
+
+/* a setting that belongs to the choice above it */
+.sub {
+  margin-top: 2rem;
+}
+
+h3 {
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+h4 {
+  margin-top: 1.75rem;
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.sub > .about {
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.sub > .chips,
+.sub > .choices {
+  margin-top: 0.75rem;
+}
+
+/* ---- choices: one of a few, each explained ---------------------------- */
+
+.choices {
+  display: grid;
+}
+
+.choice,
+.switch {
+  display: grid;
+  padding: 0.75rem 0;
+  cursor: pointer;
+}
+
+/* the switch sits at the end of its row, so its text lines up with the text of every other row */
+.switch {
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 1.5rem;
+  align-items: center;
+}
+
+/* set apart from the hotkey form above it */
+#sounds-field {
+  margin-top: 1.5rem;
+}
+
+.switch ~ .switch {
+  border-top: 1px dashed var(--rule);
+}
+
+.choice + .choice {
+  border-top: 1px dashed var(--rule);
+}
+
+.choice {
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.875rem;
+  align-items: center;
+}
+
+.choice-text,
+.switch-text {
+  display: grid;
+  gap: 0.125rem;
+}
+
+.choice-name {
+  font-weight: 550;
+}
+
+.choice-about {
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.choice-about.is-problem {
+  color: var(--red);
+}
+
+input[type="radio"],
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.choice input[type="radio"] {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  background: var(--paper-raised);
+  display: grid;
+  place-content: center;
+}
+
+.choice input[type="radio"]::before {
+  content: "";
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 50%;
+  background: var(--ink);
+  transform: scale(0);
+  transition: transform 120ms ease-out;
+}
+
+.choice input[type="radio"]:checked::before {
+  transform: scale(1);
+}
+
+.choices.is-compact .choice {
+  padding: 0.4375rem 0;
+}
+
+.choices.is-compact .choice-name {
+  font-family: var(--keys);
+  font-stretch: 87%;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.choice-meta {
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+
+/* ---- rows: things to act on, one after another ------------------------ */
+
+.rows {
+  margin-top: 0.5rem;
+}
+
+.about + .rows {
+  margin-top: 1.25rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 1rem;
+  align-items: center;
+  padding: 0.75rem 0;
+}
+
+.row + .row {
+  border-top: 1px dashed var(--rule);
+}
+
+.row-text {
+  display: grid;
+  gap: 0.125rem;
+}
+
+.row-wide {
+  grid-column: 1 / -1;
+  margin-top: 0.625rem;
+}
+
+.row .button {
+  height: 2.25rem;
+  padding: 0 0.75rem;
+  font-size: 0.9375rem;
+}
+
+.row .typed-input {
+  height: 2.25rem;
+  padding-block: 0.375rem;
+}
+
+.progress {
+  height: 0.375rem;
+  border-radius: 0.1875rem;
+  background: var(--rule);
+  overflow: hidden;
+}
+
+.progress-done {
+  width: 0;
+  height: 100%;
+  background: var(--ink);
+  transition: width 400ms linear;
+}
+
+.progress-text {
+  margin-top: 0.375rem;
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- switch ----------------------------------------------------------- */
+
+.switch input {
+  position: relative;
+  width: 2.75rem;
+  height: 1.625rem;
+  border: 1.5px solid var(--ink);
+  border-radius: 0.8125rem;
+  background: var(--paper-raised);
+  transition: background-color 140ms ease-out;
+}
+
+.switch input::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: transform 140ms ease-out, background-color 140ms ease-out;
+}
+
+.switch input:checked {
+  background: var(--ink);
+}
+
+.switch input:checked::before {
+  background: var(--paper-raised);
+  transform: translateX(18px);
+}
+
+/* ---- setup check ------------------------------------------------------ */
+
+.checks {
+  margin-top: 1rem;
+}
+
+.check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.875rem;
+  align-items: center;
+  padding: 0.75rem 0;
+}
+
+.check + .check {
+  border-top: 1px dashed var(--rule);
+}
+
+.check-mark {
+  display: grid;
+  place-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 50%;
+  font-size: 0.8125rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.is-ok .check-mark {
+  color: var(--ok);
+}
+
+.is-ok .check-mark::before {
+  content: "✓";
+  font-size: 1.0625rem;
+}
+
+.is-missing .check-mark {
+  background: var(--red);
+  color: var(--paper-raised);
+}
+
+.is-missing .check-mark::before {
+  content: "!";
+}
+
+.check .with-button {
+  margin-top: 0.5rem;
+}
+
+.fix {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1.5px solid var(--rule);
+  border-radius: 0.375rem;
+  background: var(--paper-raised);
+  overflow-wrap: anywhere;
+}
+
+.ready {
+  border-top: 1px solid var(--rule);
+  padding: 1rem 0;
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+}
+
+.ready::before {
+  content: "✓ ";
+  color: var(--ok);
+  font-weight: 800;
+}
+
+/* ---- advanced: folded until wanted ------------------------------------- */
+
+.advanced summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 1rem;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+}
+
+.advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced summary::after {
+  content: "";
+  width: 0.625rem;
+  height: 0.625rem;
+  margin-right: 0.25rem;
+  border-right: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  transform: translateY(-25%) rotate(45deg);
+  transition: transform 140ms ease-out;
+}
+
+.advanced[open] summary::after {
+  transform: translateY(25%) rotate(-135deg);
+}
+
+.summary-text {
+  display: grid;
+}
+
+.summary-title {
+  --flare: 100;
+  font-size: 1.3125rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.advanced > .sub {
+  padding-top: 1.5rem;
+  border-top: 1px dashed var(--rule);
+}
+
+.advanced > .sub > h3 + * {
+  margin-top: 0.75rem;
+}
+
+/* ---- chips: one of many, no explanation needed ------------------------ */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.chip {
+  position: relative;
+  display: inline-grid;
+}
+
+.chip input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 1.25rem;
+}
+
+.chip span {
+  padding: 0.375rem 0.875rem;
+  border: 1.5px solid var(--rule);
+  border-radius: 1.25rem;
+  background: var(--paper-raised);
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  pointer-events: none;
+  transition: background-color 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.chip:hover span {
+  border-color: var(--ink);
+}
+
+.chip input:checked + span {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper-raised);
+}
+
+/* ---- fields ----------------------------------------------------------- */
+
+.field {
+  margin-top: 1.5rem;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 0.375rem;
+  font-weight: 550;
+}
+
+.typed-input,
+textarea {
+  display: block;
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  border: 1.5px solid var(--rule);
+  border-radius: 0.375rem;
+  background: var(--paper-raised);
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.typed-input {
+  height: 2.75rem;
+}
+
+.typed-input.is-short {
+  width: 7rem;
+}
+
+textarea {
+  font: inherit;
+  resize: vertical;
+  min-height: 5.5rem;
+}
+
+.typed-input:hover,
+textarea:hover {
+  border-color: var(--ink-soft);
+}
+
+::placeholder {
+  color: var(--ink-soft);
+  opacity: 0.75;
+}
+
+.hint,
+.note,
+.problem {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  max-width: 30rem;
+}
+
+.hint {
+  color: var(--ink-soft);
+}
+
+.hint code,
+.note code {
+  font-size: 0.78125rem;
+}
+
+/* a setting the shell overrides: written in the margin, like a note to self */
+.note {
+  --slant: -10;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--ink);
+}
+
+.problem {
+  color: var(--red);
+}
+
+.with-button {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.with-button .typed-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.key-line {
+  padding: 0.625rem 0;
+}
+
+.key-line code {
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  background: var(--paper-raised);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.confirm-text {
+  flex-basis: 100%;
+  font-size: 0.9375rem;
+}
+
+/* ---- buttons ---------------------------------------------------------- */
+
+.button {
+  height: 2.75rem;
+  padding: 0 1rem;
+  border: 1.5px solid var(--ink);
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.button:hover {
+  background: var(--ink);
+  color: var(--paper-raised);
+}
+
+.button.is-primary {
+  background: var(--ink);
+  color: var(--paper-raised);
+}
+
+.button.is-primary:hover {
+  background: var(--ink-hover);
+}
+
+.button.is-danger {
+  border-color: var(--red);
+  background: var(--red);
+  color: var(--paper-raised);
+}
+
+.button.is-danger:hover {
+  background: var(--red-hover);
+  border-color: var(--red-hover);
+}
+
+/* an action that is there when wanted, and no louder than a link */
+.button.is-quiet {
+  padding: 0 0.25rem;
+  border-color: transparent;
+  font-weight: 400;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+.button.is-quiet:hover {
+  background: transparent;
+  color: var(--ink);
+  text-decoration-thickness: 2px;
+}
+
+.button:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+form > .actions {
+  margin-top: 1rem;
+}
+
+/* keys someone else holds: said in red, with the line that holds them */
+.taken {
+  margin-top: 1rem;
+  padding: 0.125rem 0 0.125rem 0.875rem;
+  border-left: 2px solid var(--red);
+}
+
+.taken pre {
+  margin: 0.5rem 0 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.typed-input.is-listening {
+  border-color: var(--red);
+  outline: 2px solid var(--red);
+  outline-offset: 0;
+}
+
+.actions .button,
+.snippet .button {
+  height: 2.25rem;
+  padding: 0 0.75rem;
+  font-size: 0.9375rem;
+}
+
+/* ---- hotkey snippet --------------------------------------------------- */
+
+#desktops {
+  margin-top: 1.25rem;
+}
+
+.snippet {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.875rem;
+  border: 1.5px solid var(--rule);
+  border-radius: 0.375rem;
+  background: var(--paper-raised);
+}
+
+.snippet pre {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+/* ---- focus, and everything switched off ------------------------------- */
+
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.typed-input:focus-visible,
+textarea:focus-visible {
+  outline-offset: 0;
+  border-color: var(--ink);
+}
+
+:disabled,
+.is-off {
+  cursor: not-allowed;
+}
+
+.is-off .choice-name,
+.is-off > label,
+.is-off textarea,
+.is-off input {
+  opacity: 0.45;
+}
+
+.is-off,
+.is-off input,
+.is-off textarea {
+  cursor: not-allowed;
+}
+
+.stopped {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 0.875rem var(--gutter);
+  background: var(--red);
+  color: var(--paper-raised);
+  text-align: center;
+}
+
+.is-stopped .pad {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* ---- the specimen ----------------------------------------------------- */
+
+.label {
+  --flare: 70;
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+.said {
+  --slant: -12;
+  --flare: 100;
+  --line: 3rem;
+  margin: 0.25rem 0 2.5rem;
+  font-size: 2rem;
+  font-weight: 350;
+  line-height: var(--line);
+  letter-spacing: -0.012em;
+  /* written on the pad's ruling */
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 calc(var(--line) - 0.4375rem),
+    var(--rule) calc(var(--line) - 0.4375rem) calc(var(--line) - 0.375rem),
+    transparent calc(var(--line) - 0.375rem) var(--line)
+  );
+}
+
+/* the red pencil: struck out, or underlined as a term it knows */
+.cut,
+.term {
+  background-repeat: no-repeat;
+  background-image: linear-gradient(var(--red), var(--red));
+  background-size: 0% 2px;
+  transition: background-size 320ms cubic-bezier(0.3, 0, 0.2, 1), color 320ms ease-out;
+}
+
+.cut {
+  background-position: 0 56%;
+}
+
+.term {
+  background-position: 0 86%;
+}
+
+.is-clean .cut {
+  background-size: 100% 2px;
+  color: var(--ink-soft);
+}
+
+.is-terms .term {
+  background-size: 100% 2px;
+}
+
+.typed {
+  margin-top: 0.5rem;
+  font-family: var(--keys);
+  font-stretch: 87%;
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.typed mark {
+  background: none;
+  color: inherit;
+  box-shadow: inset 0 -2px 0 var(--red);
+}
+
+.caret {
+  display: inline-block;
+  width: 0.5625rem;
+  height: 1.25rem;
+  margin-left: 0.125rem;
+  vertical-align: -0.25rem;
+  background: var(--ink);
+}
+
+.caret.is-fresh {
+  animation: blink 900ms steps(1, end) 3;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.then {
+  --slant: -10;
+  margin-top: 0.875rem;
+  color: var(--red);
+  font-size: 0.9375rem;
+}
+
+.caption {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  max-width: 26rem;
+}
+
+/* ---- the same, with your own voice ------------------------------------ */
+
+.trial {
+  margin-top: 3rem;
+}
+
+.trial-state {
+  margin-top: 0.25rem;
+  min-height: 1.5rem;
+}
+
+.trial-state.is-listening::before {
+  content: "";
+  display: inline-block;
+  width: 0.625rem;
+  height: 0.625rem;
+  margin-right: 0.5rem;
+  border-radius: 50%;
+  background: var(--red);
+  animation: listening 1.4s ease-in-out infinite;
+}
+
+@keyframes listening {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.trial-state.is-problem {
+  color: var(--red);
+}
+
+.trial .typed {
+  margin-top: 0.25rem;
+}
+
+.trial .actions {
+  margin-top: 1rem;
+}
+
+/* ---- narrow: the pad folds, specimen first ---------------------------- */
+
+@media (max-width: 58rem) {
+  :root {
+    --gutter: 1.5rem;
+  }
+
+  .pad {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .top,
+  .settings,
+  .specimen {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: center;
+  }
+
+  .top {
+    padding: 2.5rem var(--gutter) 2rem;
+  }
+
+  .specimen {
+    order: 1;
+    width: 100%;
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+    border-bottom: 2px solid var(--red);
+  }
+
+  .specimen-inner {
+    position: static;
+    padding: 2.5rem 0 2rem;
+    margin: 0 auto;
+  }
+
+  .settings {
+    order: 2;
+    padding-top: 2.5rem;
+  }
+
+  .said {
+    --line: 2.5rem;
+    font-size: 1.625rem;
+    margin-bottom: 1.75rem;
+  }
+
+  .caption {
+    margin-top: 1.75rem;
+  }
+
+  .with-button {
+    flex-wrap: wrap;
+  }
+
+  .with-button .typed-input {
+    flex-basis: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

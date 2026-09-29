@@ -1,14 +1,19 @@
-//! yap: record the mic, transcribe locally with whisper.cpp, print or type the text.
+//! rookey: record the mic, transcribe locally with whisper.cpp, print or type the text.
 //!
-//!   yap          record until Enter (or Ctrl-C), print transcript to stdout
-//!   yap toggle   first call starts recording, second call stops it and types the text
+//!   rookey          record until Enter (or Ctrl-C), print transcript to stdout
+//!   rookey toggle   first call starts recording, second call stops it and types the text
+//!   rookey ui       settings in the browser
 //!
-//! Env: YAP_MODEL (ggml model path), YAP_LANG (default "auto").
+//! Settings are env vars, or KEY=value lines in <config_dir>/rookey/config (the environment wins):
+//! ROOKEY_MODEL (ggml model path), ROOKEY_LANG (default "auto"), ROOKEY_BACKEND,
+//! ROOKEY_SANITIZE, ROOKEY_EDIT, ROOKEY_CONTEXT, ROOKEY_READER (see README).
+//! API keys are read the same way, from <data_dir>/rookey/keys.
 
+use std::collections::HashMap;
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, LazyLock, Mutex, RwLock, mpsc};
 use std::time::Duration;
 use std::{env, fs, thread};
 
@@ -32,26 +37,151 @@ fn verbosity() -> u8 {
 /// Log on stderr at the given verbosity level, timestamped from process start.
 macro_rules! vlog {
     ($level:expr, $($arg:tt)*) => {
-        if verbosity() >= $level {
-            let t = START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64();
+        if $crate::verbosity() >= $level {
+            let t = $crate::START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64();
             eprintln!("[{t:7.3}s] {}", format!($($arg)*));
         }
     };
 }
 
+mod desktop;
+#[cfg(target_os = "linux")]
+mod listen;
+mod models;
+mod reader;
+mod ui;
+
+static CONFIG: LazyLock<RwLock<HashMap<String, String>>> = LazyLock::new(Default::default);
+
+/// A setting by its env var name, from the environment or else the files.
+/// Unset, "", "0" and "false" all mean off.
+fn setting(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .or_else(|| CONFIG.read().unwrap().get(key).cloned())
+        .filter(|v| !matches!(v.as_str(), "" | "0" | "false"))
+}
+
+/// Holds the pid of the `rookey toggle` recording while one runs.
+fn pidfile() -> PathBuf {
+    dirs::runtime_dir().unwrap_or_else(env::temp_dir).join("rookey.pid")
+}
+
+fn config_path() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join("rookey").join("config"))
+}
+
+/// API keys are kept apart from the settings: ~/.config is what dotfile managers sync,
+/// and what ends up in a public repo.
+// ponytail: a file only its owner can read; the system keyring if that stops being enough.
+fn keys_path() -> Option<PathBuf> {
+    Some(dirs::data_dir()?.join("rookey").join("keys"))
+}
+
+/// The tool was called yap before: its settings, keys and models move over once.
+// ponytail: drop this once nobody has a yap directory left.
+fn move_from_yap() {
+    for base in [dirs::config_dir(), dirs::data_dir()].into_iter().flatten() {
+        let (old, new) = (base.join("yap"), base.join("rookey"));
+        if !old.is_dir() || new.exists() {
+            continue;
+        }
+        if let Err(e) = fs::rename(&old, &new) {
+            eprintln!("rookey: couldn't move {} to {}: {e}", old.display(), new.display());
+            continue;
+        }
+        eprintln!("rookey: moved {} to {}", old.display(), new.display());
+        for file in [new.join("config"), new.join("keys")] {
+            let Ok(text) = fs::read_to_string(&file) else { continue };
+            let renamed = without_yap_names(&text);
+            if renamed == text {
+                continue;
+            }
+            // a new file beside it, then a rename: a crash halfway never leaves half a keys file
+            let tmp = file.with_extension("new");
+            let done = fs::metadata(&file).and_then(|meta| {
+                fs::write(&tmp, &renamed)?;
+                fs::set_permissions(&tmp, meta.permissions())?;
+                fs::rename(&tmp, &file)
+            });
+            if let Err(e) = done {
+                let _ = fs::remove_file(&tmp);
+                eprintln!("rookey: {} still uses YAP_ names: {e}", file.display());
+            }
+        }
+    }
+}
+
+fn without_yap_names(text: &str) -> String {
+    text.split_inclusive('\n')
+        .map(|line| match line.trim_start().strip_prefix("YAP_") {
+            Some(rest) => format!("ROOKEY_{rest}"),
+            None => line.to_string(),
+        })
+        .collect()
+}
+
+/// Reads the settings, then the keys. A key still sitting in the settings file counts,
+/// one in the keys file wins over it.
+fn load_config() {
+    let mut all = HashMap::new();
+    for path in [config_path(), keys_path()].into_iter().flatten() {
+        match fs::read_to_string(&path) {
+            Ok(text) => {
+                let part = parse_config(&text);
+                vlog!(2, "config: {} ({} settings)", path.display(), part.len());
+                all.extend(part);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                vlog!(2, "config: none at {}", path.display())
+            }
+            Err(e) => eprintln!("rookey: config {}: {e}", path.display()),
+        }
+    }
+    *CONFIG.write().unwrap() = all;
+}
+
+/// KEY=value lines. Blank lines and # comments are skipped, one pair of quotes around a value
+/// is dropped.
+// ponytail: flat env-style file, no toml dependency; move to TOML if settings ever nest.
+fn parse_config(text: &str) -> HashMap<String, String> {
+    let mut config = HashMap::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            // not echoing the line: it may be a pasted secret
+            eprintln!("rookey: config line {}: expected KEY=value, ignored", n + 1);
+            continue;
+        };
+        let value = value.trim();
+        let value = ['"', '\'']
+            .iter()
+            .find_map(|&q| value.strip_prefix(q)?.strip_suffix(q))
+            .unwrap_or(value);
+        config.insert(key.trim().to_string(), value.to_string());
+    }
+    config
+}
+
 fn main() {
     START.get_or_init(std::time::Instant::now);
     if let Err(e) = cli() {
-        eprintln!("yap: {e}");
+        eprintln!("rookey: {e}");
         std::process::exit(1);
     }
 }
 
 fn cli() -> Res<()> {
-    let mut toggle = false;
+    let (mut toggle, mut ui, mut open, mut listen) = (false, false, true, false);
     for arg in env::args().skip(1) {
         match arg.as_str() {
             "toggle" => toggle = true,
+            "ui" => ui = true,
+            "listen" => listen = true,
+            "--no-open" => open = false, // just print the link, for a browser somewhere else
             // -v, -vv, -vvv (or repeated -v) raise the level
             v if v.len() > 1 && v.starts_with('-') && v[1..].chars().all(|c| c == 'v') => {
                 VERBOSE.fetch_add(v.len() as u8 - 1, std::sync::atomic::Ordering::Relaxed);
@@ -60,13 +190,24 @@ fn cli() -> Res<()> {
                 VERBOSE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             _ => {
-                eprintln!("usage: yap [-v|-vv|-vvv] [toggle]");
+                eprintln!("usage: rookey [-v|-vv|-vvv] [toggle | listen | ui [--no-open]]");
                 std::process::exit(2);
             }
         }
     }
+    move_from_yap();
+    if ui {
+        return ui::run(open);
+    }
+    load_config();
+    if listen {
+        #[cfg(target_os = "linux")]
+        return listen::run();
+        #[cfg(not(target_os = "linux"))]
+        return Err("`rookey listen` reads keyboards through evdev, which only Linux has".into());
+    }
 
-    let pidfile = dirs::runtime_dir().unwrap_or_else(env::temp_dir).join("yap.pid");
+    let pidfile = pidfile();
     if toggle {
         // A recording is running: tell it to stop, it does the rest.
         if let Ok(pid) = fs::read_to_string(&pidfile) {
@@ -79,7 +220,20 @@ fn cli() -> Res<()> {
         fs::write(&pidfile, std::process::id().to_string())?;
     }
 
-    let text = run(toggle);
+    let (stop_tx, stop_rx) = mpsc::channel();
+    // Enter stops too: Ctrl-C would also kill the other side of `rookey | wl-copy`.
+    if !toggle && std::io::stdin().is_terminal() {
+        let tx = stop_tx.clone();
+        thread::spawn(move || {
+            let _ = std::io::stdin().read_line(&mut String::new());
+            let _ = tx.send(());
+        });
+    }
+    ctrlc::set_handler(move || {
+        let _ = stop_tx.send(());
+    })?;
+
+    let text = run(if toggle { Mode::Toggle } else { Mode::Terminal }, stop_rx);
     if toggle {
         let _ = fs::remove_file(&pidfile);
     }
@@ -93,73 +247,172 @@ fn cli() -> Res<()> {
     Ok(())
 }
 
+/// Who asked for the recording, which decides where progress and the text go.
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Terminal, // `rookey`: hints and live partials on stderr, the text on stdout
+    Toggle,   // `rookey toggle` from a hotkey: desktop notifications, the text typed
+    Page,     // the test on the settings page: quiet, the text handed back
+}
+
 enum Backend {
     Local(Loader),
     ElevenLabs,
     Realtime(Option<Realtime>), // connected on the first audio tick
 }
 
-fn run(toggle: bool) -> Res<String> {
-    let mut backend = match env::var("YAP_BACKEND").as_deref() {
+/// Records until `stop` fires, then transcribes with the engine in the settings.
+fn run(mode: Mode, stop_rx: mpsc::Receiver<()>) -> Res<String> {
+    let mut backend = match setting("ROOKEY_BACKEND").as_deref() {
         // Load the model while we record, so stopping feels instant.
-        Err(_) | Ok("local") => Backend::Local(spawn_model_loader()?),
-        Ok("elevenlabs") => Backend::ElevenLabs,
-        Ok("elevenlabs-realtime") => Backend::Realtime(None),
-        Ok(b) => {
+        None | Some("local") => Backend::Local(spawn_model_loader()?),
+        Some("elevenlabs") => Backend::ElevenLabs,
+        Some("elevenlabs-realtime") => Backend::Realtime(None),
+        Some(b) => {
             return Err(format!(
-                "unknown YAP_BACKEND {b:?} (local, elevenlabs, elevenlabs-realtime)"
+                "unknown ROOKEY_BACKEND {b:?} (local, elevenlabs, elevenlabs-realtime)"
             )
             .into());
         }
     };
     // Verbose logs every partial as its own line instead of rewriting one.
     let show_partials =
-        !toggle && std::io::stderr().is_terminal() && verbosity() == 0;
-    vlog!(2, "backend: {}", env::var("YAP_BACKEND").unwrap_or_else(|_| "local".into()));
-
-    let (stop_tx, stop_rx) = mpsc::channel();
-    // Enter stops too: Ctrl-C would also kill the other side of `yap | wl-copy`.
-    if !toggle && std::io::stdin().is_terminal() {
-        let tx = stop_tx.clone();
-        thread::spawn(move || {
-            let _ = std::io::stdin().read_line(&mut String::new());
-            let _ = tx.send(());
-        });
-    }
-    ctrlc::set_handler(move || {
-        let _ = stop_tx.send(());
-    })?;
+        mode == Mode::Terminal && std::io::stderr().is_terminal() && verbosity() == 0;
+    vlog!(2, "backend: {}", setting("ROOKEY_BACKEND").unwrap_or_else(|| "local".into()));
+    // Grabbed now, while the window being dictated into is still the one on screen.
+    let mut context = spawn_context();
 
     // Realtime streams each chunk as it's recorded; the others wait for the whole clip.
-    let (samples, rate) = record_until(stop_rx, toggle, |chunk, rate| {
+    let mut held = Vec::new(); // realtime: audio from before the connection
+    let (samples, rate) = record_until(stop_rx, mode, |chunk, rate, last| {
         if let Backend::Realtime(rt) = &mut backend {
-            let rt = match rt {
-                Some(rt) => rt,
-                None => rt.insert(Realtime::connect()?),
-            };
-            rt.send(&resample(chunk, rate, WHISPER_RATE), false)?;
+            held.extend(resample(chunk, rate, WHISPER_RATE));
+            if rt.is_none() {
+                // The terms go into the URL, so the connection waits for them, but never
+                // blocks a tick while recording: that would hold up noticing the stop too.
+                if !last && context.as_ref().is_some_and(|c| !c.is_finished()) {
+                    return Ok(());
+                }
+                if last {
+                    settle(&mut context);
+                }
+                // realtime takes up to 50 keyterms of 20 characters
+                *rt = Some(Realtime::connect(&context_terms(&mut context, 50, 20))?);
+            }
+            let rt = rt.as_mut().unwrap();
+            rt.send(&std::mem::take(&mut held), false)?;
             rt.poll(show_partials)?;
         }
         Ok(())
     })?;
+    settle(&mut context);
 
-    notify(toggle, "transcribing");
+    notify(mode, "transcribing");
     let audio = resample(&samples, rate, WHISPER_RATE);
     match backend {
-        Backend::Local(loader) => {
-            transcribe(&loader.join().map_err(|_| "model loader panicked")??, &audio)
-        }
-        Backend::ElevenLabs => elevenlabs(&audio),
+        Backend::Local(loader) => transcribe(
+            &loader.join().map_err(|_| "model loader panicked")??,
+            &audio,
+            // the prompt holds ~224 tokens and an identifier takes several
+            &context_terms(&mut context, 30, 49),
+        ),
+        // up to 1000 keyterms under 50 characters, but past 100 a 20 s minimum is billed
+        Backend::ElevenLabs => elevenlabs(&audio, &context_terms(&mut context, 100, 49)),
         Backend::Realtime(Some(rt)) => rt.finish(show_partials),
         Backend::Realtime(None) => Ok(String::new()), // stopped before the first tick
     }
 }
 
+type Context = thread::JoinHandle<reader::Context>;
+
+/// Reads the screen, or runs the ROOKEY_CONTEXT command, while we record.
+fn spawn_context() -> Option<Context> {
+    let source = setting("ROOKEY_CONTEXT")?;
+    Some(thread::spawn(move || {
+        let read = match source.as_str() {
+            "1" | "true" => reader::from_screen(),
+            command => reader::from_command(command),
+        };
+        // Whatever goes wrong here costs the key terms, never the dictation.
+        read.unwrap_or_else(|e| {
+            eprintln!("rookey: no screen terms this time: {e}");
+            Default::default()
+        })
+    }))
+}
+
+/// After the stop the text is waited for, so the screen read gets a little longer to finish
+/// and is dropped past that: on a short clip the terms would cost more than they bring.
+// ponytail: fixed budget; OCR of a 4K screen takes ~0.7 s here, so holds under ~0.45 s go without terms.
+const CONTEXT_BUDGET: Duration = Duration::from_millis(250);
+
+fn settle(context: &mut Option<Context>) {
+    let Some(reading) = context else { return };
+    let until = Instant::now() + CONTEXT_BUDGET;
+    while !reading.is_finished() && Instant::now() < until {
+        thread::sleep(Duration::from_millis(10));
+    }
+    if !reading.is_finished() {
+        vlog!(2, "context: not ready {} ms after the stop, going without terms", CONTEXT_BUDGET.as_millis());
+        *context = None; // the thread finishes on its own, nobody waits for it
+    }
+}
+
+/// Waits for the context and gives its key terms, within the engine's limits.
+fn context_terms(context: &mut Option<Context>, max: usize, max_len: usize) -> Vec<String> {
+    let Some(context) = context.take() else {
+        return Vec::new();
+    };
+    let context = context.join().unwrap_or_default();
+    let terms = match context.listed {
+        true => listed_terms(&context.text, max, max_len),
+        false => keyterms(&context.text, max, max_len),
+    };
+    vlog!(2, "context: {} terms: {}", terms.len(), terms.join(", "));
+    terms
+}
+
+/// Terms a model has picked, one per line, cut down to what an engine takes as key terms.
+fn listed_terms(text: &str, max: usize, max_len: usize) -> Vec<String> {
+    let mut terms: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let term = line.trim().trim_start_matches(['-', '*', '•']).trim();
+        let fits = (2..=max_len).contains(&term.chars().count())
+            && term.split_whitespace().count() <= 5
+            && !term.contains(['<', '>', '{', '}', '[', ']', '\\']);
+        if fits && !terms.iter().any(|t| t == term) {
+            terms.push(term.to_string());
+        }
+    }
+    terms.truncate(max);
+    terms
+}
+
+/// Picks the words worth biasing the recognizer towards out of free text: identifiers
+/// (snake_case, camelCase, CAPS) first, then Capitalized names, most frequent first.
+// ponytail: crude heuristic over OCR output, lowercase jargon is missed; ROOKEY_READER hands
+// the picking to a vision model.
+fn keyterms(text: &str, max: usize, max_len: usize) -> Vec<String> {
+    let mut count: HashMap<&str, usize> = HashMap::new();
+    for word in text.split(|c: char| !c.is_alphanumeric() && c != '_') {
+        let word = word.trim_matches('_');
+        if (3..=max_len).contains(&word.chars().count())
+            && (word.contains('_') || word.chars().any(char::is_uppercase))
+        {
+            *count.entry(word).or_default() += 1;
+        }
+    }
+    let is_name = |w: &str| !w.contains('_') && !w.chars().skip(1).any(char::is_uppercase);
+    let mut terms: Vec<_> = count.into_iter().collect();
+    terms.sort_by_key(|&(w, n)| (is_name(w), std::cmp::Reverse(n), w));
+    terms.into_iter().take(max).map(|(w, _)| w.to_string()).collect()
+}
+
 type Loader = thread::JoinHandle<Result<WhisperContext, whisper_rs::WhisperError>>;
 
 fn spawn_model_loader() -> Res<Loader> {
-    let model = env::var_os("YAP_MODEL").map(PathBuf::from).unwrap_or_else(|| {
-        dirs::data_dir().unwrap_or_default().join("yap").join(DEFAULT_MODEL)
+    let model = setting("ROOKEY_MODEL").map(PathBuf::from).unwrap_or_else(|| {
+        dirs::data_dir().unwrap_or_default().join("rookey").join(DEFAULT_MODEL)
     });
     if !model.exists() {
         return Err(format!(
@@ -181,12 +434,35 @@ fn spawn_model_loader() -> Res<Loader> {
 }
 
 fn elevenlabs_key() -> Res<String> {
-    Ok(env::var("ELEVENLABS_API_KEY").map_err(|_| "ElevenLabs backends need ELEVENLABS_API_KEY")?)
+    Ok(setting("ELEVENLABS_API_KEY").ok_or("ElevenLabs backends need ELEVENLABS_API_KEY")?)
 }
 
-/// YAP_LANG for the API, None = auto-detect.
+/// The languages in ROOKEY_LANG ("en" or "en,uk"); none means any.
+fn languages() -> Vec<String> {
+    setting("ROOKEY_LANG")
+        .unwrap_or_default()
+        .split(',')
+        .map(|l| l.trim().to_lowercase())
+        .filter(|l| !l.is_empty() && l != "auto")
+        .collect()
+}
+
+/// The language for the API, None = auto-detect.
+// ponytail: ElevenLabs takes one language or none, so with several it detects among all.
 fn lang_code() -> Option<String> {
-    env::var("YAP_LANG").ok().filter(|l| !l.is_empty() && l != "auto")
+    match &languages()[..] {
+        [one] => Some(one.clone()),
+        _ => None,
+    }
+}
+
+/// The likeliest of `allowed`, by whisper's probability for each language code.
+fn likeliest(allowed: &[String], prob: impl Fn(&str) -> Option<f32>) -> Option<String> {
+    allowed
+        .iter()
+        .filter_map(|l| Some((l, prob(l)?)))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(l, _)| l.clone())
 }
 
 type Ws = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
@@ -196,11 +472,13 @@ type Ws = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::T
 struct Realtime {
     ws: Ws,
     committed: String,
-    sent: usize, // samples streamed so far, for the log
+    edited: Option<String>, // Some with ROOKEY_EDIT on: the edited transcript so far
+    sent: usize,            // samples streamed so far, for the log
 }
 
 impl Realtime {
-    fn connect() -> Res<Self> {
+    fn connect(terms: &[String]) -> Res<Self> {
+        use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
         use tungstenite::client::IntoClientRequest;
 
         let mut url = format!(
@@ -209,6 +487,16 @@ impl Realtime {
         );
         if let Some(lang) = lang_code() {
             url += &format!("&language_code={lang}");
+        }
+        if setting("ROOKEY_SANITIZE").is_some() {
+            url += "&no_verbatim=true";
+        }
+        let edit = setting("ROOKEY_EDIT");
+        if let Some(edit) = &edit {
+            url += &format!("&transcript_edit={}", utf8_percent_encode(edit, NON_ALPHANUMERIC));
+        }
+        for term in terms {
+            url += &format!("&keyterms={}", utf8_percent_encode(term, NON_ALPHANUMERIC));
         }
         vlog!(2, "ws: connecting {url}");
         let mut req = url.into_client_request()?;
@@ -223,7 +511,8 @@ impl Realtime {
             e => Box::<dyn std::error::Error>::from(e),
         })?;
         vlog!(2, "ws: handshake done (HTTP {}), waiting for session_started", res.status());
-        let mut rt = Realtime { ws, committed: String::new(), sent: 0 };
+        let edited = edit.map(|_| String::new());
+        let mut rt = Realtime { ws, committed: String::new(), edited, sent: 0 };
 
         // The server opens with session_started; anything else (bad key, quota) is an error.
         rt.set_read_timeout(Duration::from_secs(10))?;
@@ -278,11 +567,12 @@ impl Realtime {
         let t = std::time::Instant::now();
         vlog!(2, "waiting for committed_transcript...");
         self.set_read_timeout(Duration::from_secs(10))?;
-        loop {
-            let msg = self.next()?.ok_or("elevenlabs realtime: timed out waiting for transcript")?;
-            if self.handle(msg, show_partials)? {
-                break;
+        if let Err(e) = self.wait_final(show_partials) {
+            // A failed or slow edit must not cost the dictation: the raw transcript is here.
+            if self.committed.trim().is_empty() {
+                return Err(e);
             }
+            eprintln!("rookey: {e}; using the transcript as it is");
         }
         vlog!(2, "commit round-trip {} ms", t.elapsed().as_millis());
         let _ = self.ws.close(None);
@@ -290,16 +580,27 @@ impl Realtime {
         if show_partials {
             eprint!("\r\x1b[K"); // clear the partial line
         }
-        Ok(self.committed.trim().to_string())
+        let text = self.edited.filter(|e| !e.trim().is_empty()).unwrap_or(self.committed);
+        Ok(text.trim().to_string())
     }
 
-    /// Returns true on a committed transcript.
+    fn wait_final(&mut self, show_partials: bool) -> Res<()> {
+        loop {
+            let msg = self.next()?.ok_or("elevenlabs realtime: timed out waiting for transcript")?;
+            if self.handle(msg, show_partials)? {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Returns true on the final transcript: the committed one, or its edit with ROOKEY_EDIT on.
     fn handle(&mut self, msg: serde_json::Value, show_partials: bool) -> Res<bool> {
         let text = msg["text"].as_str().unwrap_or_default();
         let kind = msg["message_type"].as_str().unwrap_or_default();
         match kind {
             "partial_transcript" => vlog!(1, "partial:   {text}"),
             "committed_transcript" => vlog!(1, "committed: {text}"),
+            "edited_transcript" => vlog!(1, "edited:    {}", msg["edited_text"]),
             _ => vlog!(2, "<- {kind}: {text:?}"),
         }
         match kind {
@@ -308,6 +609,13 @@ impl Realtime {
             "committed_transcript" => {
                 self.committed.push(' ');
                 self.committed.push_str(text);
+                // with an edit on, its result follows; nothing said means nothing to edit
+                return Ok(self.edited.is_none() || text.trim().is_empty());
+            }
+            "edited_transcript" => {
+                let edited = self.edited.get_or_insert_default();
+                edited.push(' ');
+                edited.push_str(msg["edited_text"].as_str().unwrap_or(text));
                 return Ok(true);
             }
             t if t.contains("error") || msg.get("error").is_some() => {
@@ -342,7 +650,7 @@ impl Realtime {
 }
 
 /// ElevenLabs Scribe batch API: upload the whole clip once recording stops.
-fn elevenlabs(audio: &[f32]) -> Res<String> {
+fn elevenlabs(audio: &[f32], terms: &[String]) -> Res<String> {
     use ureq::unversioned::multipart::{Form, Part};
 
     let key = elevenlabs_key()?;
@@ -350,10 +658,20 @@ fn elevenlabs(audio: &[f32]) -> Res<String> {
 
     let mut form = Form::new()
         .text("model_id", "scribe_v2")
-        .part("file", Part::bytes(&wav).file_name("yap.wav"));
+        .part("file", Part::bytes(&wav).file_name("rookey.wav"));
     let lang = lang_code();
     if let Some(lang) = &lang {
         form = form.text("language_code", lang);
+    }
+    if setting("ROOKEY_SANITIZE").is_some() {
+        form = form.text("no_verbatim", "true");
+    }
+    let edit = setting("ROOKEY_EDIT");
+    if let Some(edit) = &edit {
+        form = form.text("transcript_edit", edit);
+    }
+    for term in terms {
+        form = form.text("keyterms", term);
     }
     vlog!(2, "http: uploading {} KB wav to /v1/speech-to-text", wav.len() / 1024);
     let t = std::time::Instant::now();
@@ -369,7 +687,13 @@ fn elevenlabs(audio: &[f32]) -> Res<String> {
         return Err(format!("elevenlabs {}: {body}", res.status()).into());
     }
     let json: serde_json::Value = serde_json::from_str(&body)?;
-    Ok(json["text"].as_str().unwrap_or_default().trim().to_string())
+    // The edit comes next to the raw text; a failed one has a message and no edited_text.
+    let edited = &json["edited_transcript"];
+    if let Some(e) = edited["message"].as_str().filter(|_| edited["edited_text"].is_null()) {
+        eprintln!("rookey: transcript edit failed: {e}; using the transcript as it is");
+    }
+    let text = edited["edited_text"].as_str().or(json["text"].as_str());
+    Ok(text.unwrap_or_default().trim().to_string())
 }
 
 /// 16-bit PCM mono WAV at WHISPER_RATE.
@@ -398,8 +722,8 @@ fn wav_bytes(audio: &[f32]) -> Vec<u8> {
 /// `tick` gets each new chunk (~250 ms, at the device rate) while recording, then the tail.
 fn record_until(
     stop: mpsc::Receiver<()>,
-    toggle: bool,
-    mut tick: impl FnMut(&[f32], u32) -> Res<()>,
+    mode: Mode,
+    mut tick: impl FnMut(&[f32], u32, bool) -> Res<()>,
 ) -> Res<(Vec<f32>, u32)> {
     let device = cpal::default_host().default_input_device().ok_or("no input device")?;
     let config = device.default_input_config()?;
@@ -421,8 +745,10 @@ fn record_until(
         f => return Err(format!("unsupported sample format {f:?}").into()),
     }?;
     stream.play()?;
-    notify(toggle, "recording");
-    eprintln!("recording... (Enter to stop)");
+    notify(mode, "recording");
+    if mode != Mode::Page {
+        eprintln!("recording... (Enter to stop)");
+    }
     let mut sent = 0;
     while let Err(mpsc::RecvTimeoutError::Timeout) = stop.recv_timeout(Duration::from_millis(250)) {
         let chunk = buf.lock().unwrap()[sent..].to_vec();
@@ -430,13 +756,13 @@ fn record_until(
         // peak level tells you at a glance whether the mic is actually hearing you
         let peak = chunk.iter().fold(0f32, |m, s| m.max(s.abs()));
         vlog!(3, "mic: {:4} ms captured, peak {peak:.3}", chunk.len() * 1000 / rate as usize);
-        tick(&chunk, rate)?;
+        tick(&chunk, rate, false)?;
     }
     drop(stream);
     vlog!(2, "mic: stopped");
 
     let samples = std::mem::take(&mut *buf.lock().unwrap());
-    tick(&samples[sent..], rate)?;
+    tick(&samples[sent..], rate, true)?;
     vlog!(2, "recorded {:.2} s total", samples.len() as f64 / rate as f64);
     Ok((samples, rate))
 }
@@ -486,16 +812,38 @@ fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
         .collect()
 }
 
-fn transcribe(ctx: &WhisperContext, audio: &[f32]) -> Res<String> {
-    let lang = env::var("YAP_LANG").unwrap_or_else(|_| "auto".into());
+fn transcribe(ctx: &WhisperContext, audio: &[f32], terms: &[String]) -> Res<String> {
+    let mut state = ctx.create_state()?;
+    let allowed = languages();
+    let lang = match &allowed[..] {
+        [] => "auto".to_string(),
+        [one] => one.clone(),
+        // several: whisper guesses over every language, and the likeliest of these wins
+        _ => {
+            let threads = thread::available_parallelism().map_or(4, |n| n.get().min(8));
+            state.pcm_to_mel(audio, threads)?;
+            let (_, probs) = state.lang_detect(0, threads)?;
+            let pick = likeliest(&allowed, |l| probs.get(whisper_rs::get_lang_id(l)? as usize).copied());
+            vlog!(2, "whisper: language {pick:?} of {allowed:?}");
+            pick.unwrap_or_else(|| "auto".into())
+        }
+    };
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     params.set_language(Some(&lang));
+    // ponytail: whisper already punctuates and skips most "um"s, so sanitize only mutes
+    // non-speech tokens here; ROOKEY_EDIT needs an LLM pass this backend doesn't have.
+    params.set_suppress_nst(setting("ROOKEY_SANITIZE").is_some());
+    if setting("ROOKEY_EDIT").is_some() {
+        vlog!(2, "whisper: ROOKEY_EDIT is ignored by the local backend");
+    }
+    if !terms.is_empty() {
+        params.set_initial_prompt(&format!("Glossary: {}", terms.join(", ")));
+    }
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_special(false);
     params.set_print_timestamps(false);
 
-    let mut state = ctx.create_state()?;
     vlog!(2, "whisper: transcribing {:.2} s of audio", audio.len() as f64 / WHISPER_RATE as f64);
     state.full(params, audio)?;
     vlog!(2, "whisper: done");
@@ -526,17 +874,48 @@ fn type_text(text: &str) -> Res<()> {
     Ok(())
 }
 
-/// Desktop notification, only in toggle mode (a hotkey has no terminal to print to).
-fn notify(toggle: bool, msg: &str) {
-    if !toggle {
+/// Desktop notification, only in toggle mode (a hotkey has no terminal to print to), and a
+/// sound as the recording starts and ends, so a hotkey needs no look at the screen.
+fn notify(mode: Mode, msg: &str) {
+    if mode != Mode::Toggle {
+        return;
+    }
+    if setting("ROOKEY_QUIET").is_none() {
+        chime(msg == "recording");
+    }
+    if setting("ROOKEY_NO_NOTIFICATIONS").is_some() {
         return;
     }
     #[cfg(target_os = "macos")]
     let _ = Command::new("osascript")
-        .args(["-e", &format!(r#"display notification "{msg}" with title "yap""#)])
+        .args(["-e", &format!(r#"display notification "{msg}" with title "rookey""#)])
         .status();
     #[cfg(not(target_os = "macos"))]
-    let _ = Command::new("notify-send").args(["-t", "1500", "yap", msg]).status();
+    let _ = Command::new("notify-send").args(["-t", "1500", "rookey", msg]).status();
+}
+
+/// Plays the start or the stop sound, without waiting for it.
+// ponytail: the desktop's own sound theme; ship our own sounds if these prove too quiet or missing.
+fn chime(start: bool) {
+    #[cfg(target_os = "macos")]
+    let (players, sound) = (&["afplay"][..], if start { "/System/Library/Sounds/Tink.aiff" } else { "/System/Library/Sounds/Pop.aiff" });
+    #[cfg(not(target_os = "macos"))]
+    let (players, sound) = (
+        &["pw-play", "paplay"][..],
+        if start {
+            "/usr/share/sounds/freedesktop/stereo/device-added.oga"
+        } else {
+            "/usr/share/sounds/freedesktop/stereo/device-removed.oga"
+        },
+    );
+    let quiet = std::process::Stdio::null;
+    for player in players {
+        let played = Command::new(player).arg(sound).stdout(quiet()).stderr(quiet()).spawn();
+        if let Ok(mut child) = played {
+            thread::spawn(move || child.wait());
+            return;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -548,7 +927,7 @@ mod tests {
     #[test]
     #[ignore]
     fn elevenlabs_jfk() {
-        let text = elevenlabs(&jfk()).unwrap();
+        let text = elevenlabs(&jfk(), &["Americans".into()]).unwrap();
         println!("{text}");
         assert!(text.to_lowercase().contains("your country"), "{text}");
     }
@@ -557,7 +936,7 @@ mod tests {
     #[test]
     #[ignore]
     fn elevenlabs_realtime_jfk() {
-        let mut rt = Realtime::connect().unwrap();
+        let mut rt = Realtime::connect(&["Americans".into()]).unwrap();
         for chunk in jfk().chunks(WHISPER_RATE as usize / 4) {
             rt.send(chunk, false).unwrap();
             rt.poll(true).unwrap();
@@ -586,6 +965,33 @@ mod tests {
             .chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / i16::MAX as f32)
             .collect()
+    }
+
+    #[test]
+    fn config_lines() {
+        let config = parse_config(
+            "# comment\n\nROOKEY_LANG = uk\nROOKEY_EDIT=\"drop \"um\"\"\nKEY='a=b'\nnonsense\nROOKEY_LANG=en\n",
+        );
+        assert_eq!(config.len(), 3);
+        assert_eq!(config["ROOKEY_LANG"], "en"); // the last one wins
+        let probs = |l: &str| match l { "en" => Some(0.2), "uk" => Some(0.5), _ => None };
+        assert_eq!(likeliest(&["en".into(), "uk".into(), "xx".into()], probs).as_deref(), Some("uk"));
+        assert_eq!(
+            without_yap_names("# YAP_X stays\nYAP_LANG=uk\nKEY=YAP_\nYAP_EDIT=x"),
+            "# YAP_X stays\nROOKEY_LANG=uk\nKEY=YAP_\nROOKEY_EDIT=x"
+        );
+        assert_eq!(config["ROOKEY_EDIT"], "drop \"um\"");
+        assert_eq!(config["KEY"], "a=b");
+    }
+
+    #[test]
+    fn keyterms_pick_identifiers() {
+        let text = "let rt = Realtime::connect()?; the MAX_BACKEND, MAX_BACKEND and \
+                    spawn_model_loader(2024) isTerminal x The __ ok";
+        let all = ["MAX_BACKEND", "isTerminal", "spawn_model_loader", "Realtime", "The"];
+        assert_eq!(keyterms(text, 10, 20), all);
+        assert_eq!(keyterms(text, 2, 20), all[..2]);
+        assert_eq!(keyterms(text, 10, 11), ["MAX_BACKEND", "isTerminal", "Realtime", "The"]);
     }
 
     #[test]
