@@ -1,0 +1,15 @@
+[package]
+name = "yap"
+version = "0.1.0"
+edition = "2024"
+description = "Local push-to-talk dictation: record, transcribe with whisper.cpp, type it out"
+
+[dependencies]
+cpal = "0.18"
+ctrlc = { version = "3.5", features = ["termination"] }
+dirs = "7"
+whisper-rs = "0.16"
+
+[features]
+cuda = ["whisper-rs/cuda"]    # Linux + NVIDIA
+metal = ["whisper-rs/metal"]  # macOS
