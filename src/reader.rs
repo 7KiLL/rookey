@@ -27,9 +27,17 @@ pub struct Context {
     pub listed: bool,
 }
 
+/// The command line as the system's shell runs it.
+fn shell(cmd: &str) -> Command {
+    let (sh, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
+    let mut shell = Command::new(sh);
+    shell.args([flag, cmd]);
+    shell
+}
+
 pub fn from_command(cmd: &str) -> Res<Context> {
     vlog!(2, "context: running {cmd:?}");
-    let out = Command::new("sh").args(["-c", cmd]).output()?;
+    let out = shell(cmd).output()?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         return Err(format!("the context command failed ({}): {}", out.status, err.trim()).into());
@@ -52,14 +60,15 @@ pub fn from_screen() -> Res<Context> {
 /// ROOKEY_SCREENSHOT replaces it with any command that prints an image.
 fn screenshot(format: &str) -> Res<Vec<u8>> {
     let out = match setting("ROOKEY_SCREENSHOT") {
-        Some(cmd) => Command::new("sh").args(["-c", &cmd]).output()?,
+        Some(cmd) => shell(&cmd).output()?,
         None => {
             let mut grim = Command::new("grim");
             grim.args(["-t", format]);
             if let Some(output) = desktop::detect().focused_output() {
                 grim.args(["-o", &output]);
             }
-            grim.arg("-").output().map_err(|e| format!("grim: {e}"))?
+            // ponytail: grim only; Windows and X11 set ROOKEY_SCREENSHOT to a command of their own
+            grim.arg("-").output().map_err(|e| format!("grim: {e} (set ROOKEY_SCREENSHOT to a command that prints a screenshot)"))?
         }
     };
     if !out.status.success() || out.stdout.is_empty() {

@@ -994,11 +994,13 @@ dependencies = [
  "ctrlc",
  "dirs",
  "evdev",
+ "getrandom 0.4.3",
  "percent-encoding",
  "serde_json",
  "tungstenite",
  "ureq",
  "whisper-rs",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

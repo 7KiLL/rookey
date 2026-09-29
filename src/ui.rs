@@ -125,14 +125,21 @@ pub fn run(open: bool) -> Res<()> {
 
 fn token() -> Res<String> {
     let mut bytes = [0u8; 16];
-    fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    getrandom::fill(&mut bytes).map_err(|e| format!("no randomness for the page's token: {e}"))?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 fn open_browser(url: &str) -> std::io::Result<()> {
-    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    // rundll32 rather than `cmd /c start`, which would split the link at its &
+    let (opener, args): (&str, &[&str]) = if cfg!(windows) {
+        ("rundll32", &["url.dll,FileProtocolHandler", url])
+    } else if cfg!(target_os = "macos") {
+        ("open", &[url])
+    } else {
+        ("xdg-open", &[url])
+    };
     let quiet = Stdio::null;
-    Command::new(opener).arg(url).stdin(quiet()).stdout(quiet()).stderr(quiet()).spawn().map(drop)
+    Command::new(opener).args(args).stdin(quiet()).stdout(quiet()).stderr(quiet()).spawn().map(drop)
 }
 
 struct Request {
@@ -584,7 +591,7 @@ fn model(asked: &Value) -> Res<()> {
 /// The hotkey rookey listens for itself: its keys, whether the service runs, and why it
 /// can't here, if it can't.
 fn listening(get: &dyn Fn(&str) -> String) -> Value {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     return json!({
         "chord": get("ROOKEY_HOTKEY"),
         "running": crate::listen::running(),
@@ -592,8 +599,8 @@ fn listening(get: &dyn Fn(&str) -> String) -> Value {
         // while rookey listens, its only bind is the one that keeps the keys from the windows
         "swallowed": desktop::is_bound(),
     });
-    #[cfg(not(target_os = "linux"))]
-    return json!({ "chord": get("ROOKEY_HOTKEY"), "running": false, "blocked": "rookey listens for keys itself only on Linux." });
+    #[cfg(not(any(target_os = "linux", windows)))]
+    return json!({ "chord": get("ROOKEY_HOTKEY"), "running": false, "blocked": "rookey listens for keys itself only on Linux and Windows." });
 }
 
 /// One hotkey at a time: the compositor's bind and rookey's own listening both run
@@ -605,11 +612,11 @@ fn hotkey(asked: &Value) -> Res<Value> {
         return Ok(state());
     }
     if asked["capture"] == true {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         return Ok(json!({ "captured": crate::listen::capture(Duration::from_secs(10))? }));
     }
     if asked["unlisten"] == true {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         crate::listen::stop()?;
         if desktop::is_bound() {
             desktop::unbind()?;
@@ -626,13 +633,13 @@ fn hotkey(asked: &Value) -> Res<Value> {
     if done.get("taken").is_some() {
         return Ok(done);
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     crate::listen::stop()?;
     write(&settings, &[("ROOKEY_HOTKEY".into(), String::new())])?;
     Ok(state())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 fn listen(settings: &Path, chord: &str, replace: bool) -> Res<Value> {
     let chord = desktop::Chord::parse(chord)?;
     chord.check()?;
@@ -668,9 +675,9 @@ fn listen(settings: &Path, chord: &str, replace: bool) -> Res<Value> {
     Ok(state())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 fn listen(_: &Path, _: &str, _: bool) -> Res<Value> {
-    Err("rookey listens for keys itself only on Linux.".into())
+    Err("rookey listens for keys itself only on Linux and Windows.".into())
 }
 
 /// A test recording from the page: the same road a dictation takes, with the text shown
@@ -750,14 +757,17 @@ fn write(path: &Path, changes: &[(String, String)]) -> Res<()> {
 
 /// Replaces the file in one step, readable by its owner only: it may hold API keys.
 fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("tmp");
     let mut file = fs::File::create(&tmp)?;
-    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    // ponytail: on Windows the profile's own ACL is what keeps it the user's; no ACL of its own
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
     file.write_all(text.as_bytes())?;
     file.sync_all()?;
     fs::rename(&tmp, path)

@@ -7,7 +7,7 @@
 //! variables typing needs. The page installs, restarts and removes it.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, mpsc};
@@ -18,9 +18,8 @@ use evdev::{EventSummary, KeyCode};
 
 use crate::Res;
 use crate::desktop::Chord;
+use crate::hold::{Hold, recording, toggle};
 
-/// A press shorter than this is a tap: it leaves the recording running.
-const TAP: Duration = Duration::from_millis(300);
 const UNIT: &str = "rookey-listen.service";
 
 /// XKB names (what compositors write) that differ from the kernel's, which is "KEY_" + the rest.
@@ -134,55 +133,13 @@ pub fn run() -> Res<()> {
         }
     });
 
-    let mut hold = Hold::new(chord, key);
+    let mut hold = Hold::new(chord, key, modifier);
     for (code, value) in rx {
         if hold.event(code, value, Instant::now(), recording) {
             toggle();
         }
     }
     Ok(())
-}
-
-/// Hold to talk, tap to keep talking: which key events start or stop a recording.
-struct Hold {
-    chord: Chord,
-    key: KeyCode,
-    // ponytail: a key whose release got lost with its keyboard stays in here; restart the service if that ever bites
-    held: HashSet<KeyCode>,
-    /// When the press that started the recording went down.
-    pressed: Option<Instant>,
-}
-
-impl Hold {
-    fn new(chord: Chord, key: KeyCode) -> Hold {
-        Hold { chord, key, held: HashSet::new(), pressed: None }
-    }
-
-    /// Whether this event (1 down, 0 up, 2 repeat) should run `rookey toggle`.
-    fn event(&mut self, code: KeyCode, value: i32, now: Instant, recording: impl Fn() -> bool) -> bool {
-        match value {
-            1 => self.held.insert(code),
-            0 => self.held.remove(&code),
-            _ => return false, // auto-repeat
-        };
-        if code != self.key {
-            return false;
-        }
-        if value == 0 {
-            // a hold ends the recording as it lets go, a tap leaves it running
-            return self.pressed.take().is_some_and(|at| now - at >= TAP) && recording();
-        }
-        // the modifiers held besides the key itself, all of them and nothing else
-        let mut mods: Vec<&str> = self.held.iter().filter(|&&k| k != self.key).filter_map(|&k| modifier(k)).collect();
-        mods.sort_by_key(|m| crate::desktop::MODS.iter().position(|x| x == m));
-        mods.dedup();
-        if mods != self.chord.mods() {
-            return false;
-        }
-        // running already, from a tap: this press ends it, and its release does nothing
-        self.pressed = (!recording()).then_some(now);
-        true
-    }
 }
 
 /// Waits for keys to be pressed, the way the page's "Press keys" does, but from the keyboards
@@ -251,21 +208,6 @@ fn read(mut device: evdev::Device, tx: &mpsc::Sender<(KeyCode, i32)>) {
     }
 }
 
-/// Whether a `rookey toggle` recording is running now.
-fn recording() -> bool {
-    let Ok(pid) = fs::read_to_string(crate::pidfile()) else { return false };
-    Path::new("/proc").join(pid.trim()).exists()
-}
-
-fn toggle() {
-    let exe = env::current_exe().unwrap_or_else(|_| "rookey".into());
-    match Command::new(exe).arg("toggle").spawn() {
-        // reaped by a thread of its own, so none are left as zombies
-        Ok(mut child) => drop(thread::spawn(move || child.wait())),
-        Err(e) => eprintln!("rookey listen: couldn't start rookey toggle: {e}"),
-    }
-}
-
 fn unit_path() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("systemd/user").join(UNIT))
 }
@@ -320,40 +262,6 @@ pub fn running() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn hold_and_tap() {
-        let (d, ctrl, x) = (KeyCode::KEY_D, KeyCode::KEY_LEFTCTRL, KeyCode::KEY_X);
-        let t = Instant::now();
-        let ms = |n| t + Duration::from_millis(n);
-        let mut hold = Hold::new(Chord::parse("Ctrl+D").unwrap(), d);
-
-        // D alone, or with a key that isn't Ctrl, is ordinary typing
-        assert!(!hold.event(d, 1, ms(0), || false));
-        assert!(!hold.event(d, 0, ms(10), || false));
-
-        // held: starts on the way down, stops on the way up
-        assert!(!hold.event(ctrl, 1, ms(0), || false));
-        assert!(hold.event(d, 1, ms(10), || false));
-        assert!(!hold.event(d, 2, ms(300), || true)); // auto-repeat
-        assert!(hold.event(d, 0, ms(900), || true));
-
-        // tapped: starts, keeps going past the release, the next press stops it
-        assert!(hold.event(d, 1, ms(1000), || false));
-        assert!(!hold.event(d, 0, ms(1100), || true));
-        assert!(hold.event(d, 1, ms(5000), || true));
-        assert!(!hold.event(d, 0, ms(6000), || false));
-
-        // Ctrl+Shift+D is another combination
-        assert!(!hold.event(KeyCode::KEY_RIGHTSHIFT, 1, ms(7000), || false));
-        assert!(!hold.event(d, 1, ms(7010), || false));
-        assert!(!hold.event(x, 1, ms(7020), || false));
-
-        // a key on its own, like the right Ctrl, is not a modifier of itself
-        let mut hold = Hold::new(Chord::parse("Control_R").unwrap(), KeyCode::KEY_RIGHTCTRL);
-        assert!(hold.event(KeyCode::KEY_RIGHTCTRL, 1, ms(0), || false));
-        assert!(hold.event(KeyCode::KEY_RIGHTCTRL, 0, ms(800), || true));
-    }
 
     #[test]
     fn key_names() {
