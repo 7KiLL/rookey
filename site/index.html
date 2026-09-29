@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rookey: say it, it's typed</title>
+<meta name="description" content="Local dictation for Linux, macOS and Windows. Hold a key, talk, let go: the text lands in whatever window you are in.">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/commissioner-latin.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+/* the settings page's steno pad: green-tinted paper, a red rule, a proofreader's red pencil */
+@font-face { font-family: "Commissioner"; src: url("/fonts/commissioner-latin.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Martian Mono"; src: url("/fonts/martian-mono-latin.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
+
+:root {
+  --paper: #E8EFDF; --raised: #F6F9EF; --ink: #17231E; --soft: #4A5B52; --rule: #B5C9B4;
+  --red: #C0342B; --red-hover: #A32A22; --on-red: #F6F9EF;
+  --band: #17231E; --band-ink: #E4ECDD; --band-soft: #9DB0A3; --band-card: #1B2621; --band-rule: #2F4137; --band-red: #F0645A;
+  --code: #121A16; --code-ink: #E4ECDD; --code-soft: #9DB0A3; --prompt: #7FC39B; --code-button: #2F4137;
+  --voice: "Commissioner", system-ui, sans-serif;
+  --keys: "Martian Mono", ui-monospace, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #121A16; --raised: #1B2621; --ink: #E4ECDD; --soft: #9DB0A3; --rule: #2F4137;
+    --red: #F0645A; --red-hover: #D9544B; --on-red: #121A16;
+    --band: #0B110E; --band-card: #16201B;
+    --code: #0B110E;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--voice); font-size: 17px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+a { color: var(--red); }
+a:hover { color: var(--red-hover); }
+code, kbd, pre { font-family: var(--keys); }
+.wrap { max-width: 1248px; margin: 0 auto; padding: 0 16px; }
+@media (min-width: 720px) { .wrap { padding: 0 48px; } }
+.soft { color: var(--soft); }
+.mono { font-family: var(--keys); font-size: 0.88em; }
+.kicker { font-family: var(--keys); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--soft); }
+h1, h2, h3 { margin: 0; letter-spacing: -0.025em; line-height: 1.05; }
+h2 { font-size: clamp(32px, 4vw, 48px); font-weight: 700; }
+h3 { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; }
+p { margin: 0; }
+section { padding: 72px 0; }
+@media (min-width: 900px) { section { padding: 104px 0; } }
+
+/* nav */
+header { border-bottom: 1px solid var(--rule); }
+header .wrap { height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.brand { display: flex; align-items: center; gap: 12px; color: var(--ink); text-decoration: none; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.brand svg { width: 34px; height: 34px; }
+nav { display: flex; align-items: center; gap: 28px; font-weight: 500; }
+nav a { color: var(--ink); text-decoration: none; }
+nav a:hover { color: var(--red); }
+nav .extra { display: none; }
+@media (min-width: 820px) { nav .extra { display: inline; } }
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 44px; padding: 0 20px; border-radius: 10px; background: var(--ink); color: var(--paper); text-decoration: none; font-weight: 600; border: 0; font: inherit; font-weight: 600; cursor: pointer; }
+.button:hover { color: var(--paper); opacity: 0.9; }
+.button.red { background: var(--red); color: var(--on-red); min-height: 56px; padding: 0 28px; font-size: 18px; border-radius: 12px; }
+.button.red:hover { background: var(--red-hover); color: var(--on-red); opacity: 1; }
+.button svg { width: 20px; height: 20px; }
+
+/* hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 56px; align-items: center; padding-top: 64px; padding-bottom: 80px; }
+@media (min-width: 1000px) { .hero { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 80px; padding-top: 104px; padding-bottom: 120px; } }
+.hero h1 { font-size: clamp(56px, 8vw, 88px); font-weight: 800; letter-spacing: -0.035em; line-height: 0.98; margin: 24px 0; }
+.hero .lead { font-size: 20px; max-width: 520px; }
+.cta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin: 32px 0 16px; }
+.cta .others { color: var(--ink); font-weight: 500; }
+
+/* the pad: what you said | what got typed */
+.pad { margin: 0; background: var(--raised); border: 1px solid var(--rule); border-radius: 18px; overflow: hidden; box-shadow: 0 1px 0 var(--rule), 0 24px 48px -28px rgba(0,0,0,0.35); }
+.pad-top { height: 52px; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--rule); font-family: var(--keys); font-size: 13px; }
+.rec { display: flex; align-items: center; gap: 10px; color: var(--red); font-weight: 600; }
+.rec::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--red); animation: blink 1.4s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .rec::before { animation: none; } }
+kbd { font-size: 12px; padding: 4px 8px; border: 1px solid var(--ink); border-radius: 6px; box-shadow: 0 2px 0 var(--ink); background: var(--raised); color: var(--ink); white-space: nowrap; }
+.pad-cols { display: grid; }
+@media (min-width: 600px) { .pad-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.pad-col { padding: 24px 24px 32px; display: flex; flex-direction: column; gap: 24px; font-size: 18px; line-height: 1.6; }
+.pad-col + .pad-col { border-top: 2px solid var(--red); }
+@media (min-width: 600px) { .pad-col + .pad-col { border-top: 0; border-left: 2px solid var(--red); } }
+.pad-col.typed p { font-weight: 500; }
+.pad s { color: var(--red); text-decoration-thickness: 2px; }
+.term { font-family: var(--keys); font-size: 15px; background: var(--paper); padding: 1px 6px; border-radius: 4px; }
+.caret { display: inline-block; width: 2px; height: 1.2em; background: var(--ink); vertical-align: -0.2em; margin-left: 2px; }
+.pad figcaption { padding: 14px 24px; border-top: 1px solid var(--rule); font-size: 14px; color: var(--soft); }
+
+/* steps */
+.steps { list-style: none; margin: 48px 0 0; padding: 0; display: grid; gap: 40px; }
+@media (min-width: 900px) { .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; } }
+.steps li { display: flex; flex-direction: column; gap: 14px; }
+.num { font-family: var(--keys); font-size: 14px; font-weight: 600; color: var(--red); }
+.visual { height: 56px; display: flex; align-items: center; gap: 8px; }
+.visual kbd { font-size: 15px; padding: 8px 14px; border-width: 1.5px; border-radius: 8px; box-shadow: 0 3px 0 var(--ink); }
+.bars { gap: 5px; }
+.bars span { width: 6px; border-radius: 3px; background: var(--ink); }
+.bars span:last-child { background: var(--red); }
+.visual.said { font-size: 22px; font-weight: 500; }
+.steps h3 { font-size: 24px; margin-top: 4px; }
+
+/* features: a dark band either way */
+.band { background: var(--band); color: var(--band-ink); }
+.band .top { display: grid; gap: 20px; align-items: end; }
+@media (min-width: 900px) { .band .top { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 48px; } }
+.band .top p { color: var(--band-soft); font-size: 18px; }
+.cards { margin-top: 48px; display: grid; gap: 16px; }
+@media (min-width: 640px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1000px) { .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; } }
+.card { padding: 28px; border: 1px solid var(--band-rule); border-radius: 16px; background: var(--band-card); display: flex; flex-direction: column; gap: 12px; }
+.card svg { width: 28px; height: 28px; stroke: var(--band-red); }
+.card p { color: var(--band-soft); font-size: 16px; }
+.card .mono { color: var(--band-ink); }
+
+/* cli */
+.cli { display: grid; gap: 40px; align-items: center; }
+@media (min-width: 1000px) { .cli { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 80px; } }
+.cli .text { display: flex; flex-direction: column; gap: 20px; }
+.shell { padding: 28px; background: var(--code); color: var(--code-ink); border-radius: 16px; font-family: var(--keys); font-size: 14px; line-height: 1.9; display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 28px; overflow-x: auto; }
+.shell .c { color: var(--code-soft); }
+.shell .p { color: var(--prompt); }
+@media (max-width: 560px) { .shell { grid-template-columns: 1fr; } .shell .c { margin-bottom: 8px; } }
+
+/* download */
+#download { background: var(--raised); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.dl-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 24px; }
+.dl-top h2 { font-size: clamp(40px, 5vw, 56px); font-weight: 800; }
+.tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 12px; background: var(--paper); border: 1px solid var(--rule); }
+.tabs button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--ink); color: var(--paper); }
+.panel { margin-top: 40px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
+@media (min-width: 900px) { .panel { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; } }
+.panel[hidden] { display: none; }
+.box { min-width: 0; padding: 28px; border: 1px solid var(--rule); border-radius: 18px; display: flex; flex-direction: column; gap: 18px; }
+.box.first { background: var(--paper); }
+.box h3 { font-size: 26px; }
+.box .kicker { color: var(--red); font-weight: 600; }
+.cmd { display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 18px; background: var(--code); border-radius: 12px; }
+.cmd code { flex: 1; min-width: 0; color: var(--code-ink); font-size: 14px; overflow-x: auto; white-space: nowrap; padding: 8px 0; }
+.cmd button { flex-shrink: 0; min-height: 44px; padding: 0 16px; border: 0; border-radius: 8px; background: var(--code-button); color: var(--code-ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.file { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 64px; padding: 10px 18px; border: 1px solid var(--ink); border-radius: 12px; color: var(--ink); text-decoration: none; }
+.file:hover { color: var(--ink); background: var(--paper); }
+.file b { display: block; font-size: 17px; font-weight: 600; }
+.file small { font-family: var(--keys); font-size: 12px; color: var(--soft); word-break: break-all; }
+.file svg { width: 22px; height: 22px; flex-shrink: 0; }
+.lines { padding: 18px 22px; background: var(--code); color: var(--code-ink); border-radius: 12px; font-family: var(--keys); font-size: 14px; line-height: 1.8; overflow-x: auto; white-space: pre; }
+.lines .c { color: var(--code-soft); }
+.note { font-size: 15px; color: var(--soft); }
+.dl-foot { margin-top: 32px; font-size: 15px; }
+
+footer .wrap { padding-top: 48px; padding-bottom: 56px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; color: var(--soft); font-size: 15px; }
+footer nav a { color: var(--soft); font-weight: 400; }
+footer .brand { font-size: 15px; font-weight: 400; color: var(--soft); }
+footer .brand svg { width: 26px; height: 26px; }
+:focus-visible { outline: 3px solid var(--red); outline-offset: 2px; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="mark" viewBox="0 0 96 96"><rect width="96" height="96" rx="22" fill="var(--ink)"/><rect x="17" y="17" width="18" height="62" rx="9" fill="var(--paper)"/><rect x="39" y="25" width="18" height="46" rx="9" fill="var(--paper)"/><rect x="61" y="34" width="18" height="28" rx="9" fill="var(--paper)"/><circle cx="26" cy="27" r="4.5" fill="#E5584C"/></symbol>
+  <symbol id="down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></symbol>
+</svg>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="#top"><svg aria-hidden="true"><use href="#mark"/></svg>rookey</a>
+    <nav aria-label="Main">
+      <a class="extra" href="#how">How it works</a>
+      <a class="extra" href="#features">Features</a>
+      <a class="extra" href="https://github.com/7KiLL/rookey#readme">Docs</a>
+      <a class="button" href="#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap hero">
+    <div>
+      <div class="kicker">Local dictation for Linux, macOS and Windows</div>
+      <h1>Say it.<br>It's typed.</h1>
+      <p class="lead soft">Hold a key, talk, let go. The text lands in whatever window you are in. Whisper runs on your own machine, and nothing leaves it unless you pick a cloud engine.</p>
+      <div class="cta">
+        <a class="button red" href="#download" id="cta"><svg aria-hidden="true"><use href="#down"/></svg><span>Download</span></a>
+        <a class="others" href="#download" id="others">Every system, or build it yourself</a>
+      </div>
+      <div class="kicker">Free · works offline</div>
+    </div>
+
+    <figure class="pad" aria-label="What you said, and what rookey typed">
+      <div class="pad-top"><span class="rec">recording 0:06</span><span class="soft">hold <kbd>Super+Shift+D</kbd></span></div>
+      <div class="pad-cols">
+        <div class="pad-col">
+          <div class="kicker">You said</div>
+          <p><s>so um</s> can you push the fix to <s>like</s> the main branch before <s>uh</s> the standup</p>
+          <p><s>ok so</s> the <s>the</s> review is moved to <s>uh</s> thursday at ten</p>
+          <p>rename use settings store to <span class="term">useSettingsStore</span></p>
+        </div>
+        <div class="pad-col typed">
+          <div class="kicker">rookey typed</div>
+          <p>Can you push the fix to the main branch before the standup?</p>
+          <p>The review is moved to Thursday at ten.</p>
+          <p>Rename <span class="term">useSettingsStore</span><span class="caret"></span></p>
+        </div>
+      </div>
+      <figcaption>Filler words and false starts dropped, and the name read off your screen.</figcaption>
+    </figure>
+  </div>
+
+  <section id="how" style="border-top: 1px solid var(--rule)">
+    <div class="wrap">
+      <h2>Three moves, no window.</h2>
+      <ol class="steps">
+        <li>
+          <div class="num">01</div>
+          <div class="visual"><kbd>Super</kbd><kbd>Shift</kbd><kbd>D</kbd></div>
+          <h3>Hold the key</h3>
+          <p class="soft">Any combination, or one spare key like Right Alt or F13. A short tap keeps it recording until the next press.</p>
+        </li>
+        <li>
+          <div class="num">02</div>
+          <div class="visual bars" aria-hidden="true"><span style="height:14px"></span><span style="height:30px"></span><span style="height:42px"></span><span style="height:24px"></span><span style="height:36px"></span><span style="height:18px"></span><span style="height:28px"></span><span style="height:12px"></span><span style="height:22px"></span></div>
+          <h3>Talk</h3>
+          <p class="soft">In English or any of the 99 languages Whisper knows. Give it a short list and it picks the likeliest one each time.</p>
+        </li>
+        <li>
+          <div class="num">03</div>
+          <div class="visual said">Sounds good, ship it.<span class="caret"></span></div>
+          <h3>Let go</h3>
+          <p class="soft">The text is typed where your cursor is: the editor, the terminal, the chat. Or piped, if you run it from a script.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="features" class="band">
+    <div class="wrap">
+      <div class="top">
+        <h2>Yours by default. The cloud only when you ask.</h2>
+        <p>A single binary, a settings page that runs offline, and plain text files you can read.</p>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3"/></svg>
+          <h3>Runs on your machine</h3>
+          <p>whisper.cpp with large-v3-turbo, on CUDA, Metal or plain CPU. No account and no network.</p>
+        </div>
+        <div class="card">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+          <h3>Or streamed, if you want</h3>
+          <p>Bring an ElevenLabs key and it transcribes while you talk, done about 0.3 s after you let go. No model to download at all.</p>
+        </div>
+        <div class="card">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4M6 9h6M6 13h9"/></svg>
+          <h3>Knows the words on screen</h3>
+          <p>It reads the focused screen as you start, so names like <span class="mono">useSettingsStore</span> come out spelled right.</p>
+        </div>
+        <div class="card">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+          <h3>Cleans up after you</h3>
+          <p>Filler words and false starts go. Write your own instruction for the rest, in any language.</p>
+        </div>
+        <div class="card">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
+          <h3>Binds its own hotkey</h3>
+          <p>Hold to talk on Linux and Windows. On niri and Hyprland it writes the bind, checks it with the compositor, and undoes it on any fault.</p>
+        </div>
+        <div class="card">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          <h3>Keys stay out of dotfiles</h3>
+          <p>API keys live in their own file, readable only by you, away from the config you sync to GitHub.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap cli">
+      <div class="text">
+        <h2>A command first, an app second.</h2>
+        <p class="soft">Pipe it, bind it, script it. When you would rather click, <span class="mono" style="color:var(--ink)">rookey setup</span> opens a settings page for models, languages, keys and the hotkey, served from the binary itself.</p>
+        <a href="https://github.com/7KiLL/rookey#readme" style="font-weight:600">Read the docs</a>
+      </div>
+      <div class="shell">
+        <span><span class="p">$ </span>rookey setup</span><span class="c"># first run: mic, then a model or a key</span>
+        <span><span class="p">$ </span>rookey</span><span class="c"># talk, Enter, get text</span>
+        <span><span class="p">$ </span>rookey | wl-copy</span><span class="c"># straight to the clipboard</span>
+        <span><span class="p">$ </span>rookey toggle</span><span class="c"># start, then stop and type</span>
+        <span><span class="p">$ </span>rookey listen</span><span class="c"># hold to talk, let go</span>
+        <span><span class="p">$ </span>rookey -vv</span><span class="c"># steps and timings</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="download">
+    <div class="wrap">
+      <div class="dl-top">
+        <div>
+          <h2>Get rookey</h2>
+          <p class="soft" style="margin-top:12px">Nothing big is downloaded until you say so: <span class="mono">rookey setup</span> asks for a speech model, or an ElevenLabs key instead.</p>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Platform">
+          <button role="tab" id="tab-linux" aria-controls="p-linux" aria-selected="true">Linux</button>
+          <button role="tab" id="tab-mac" aria-controls="p-mac" aria-selected="false">macOS</button>
+          <button role="tab" id="tab-win" aria-controls="p-win" aria-selected="false">Windows</button>
+          <button role="tab" id="tab-source" aria-controls="p-source" aria-selected="false">Source</button>
+        </div>
+      </div>
+
+      <div class="panel" id="p-linux" role="tabpanel" aria-labelledby="tab-linux">
+        <div class="box first">
+          <div class="kicker">Recommended</div>
+          <h3>One line</h3>
+          <div class="cmd"><code>curl -fsSL https://rookey.click/install | sh</code><button type="button" data-copy>Copy</button></div>
+          <p class="note">Picks the CUDA build when it finds an NVIDIA card and the CUDA 13 runtime, the CPU build otherwise, and puts <span class="mono">rookey</span> in <span class="mono">~/.local/bin</span>.</p>
+        </div>
+        <div class="box">
+          <h3>Or grab the binary</h3>
+          <a class="file" href="https://github.com/7KiLL/rookey/releases/latest/download/rookey-x86_64-linux-cuda.tar.gz"><span><b>x86_64, NVIDIA (CUDA)</b><small>rookey-x86_64-linux-cuda.tar.gz</small></span><svg aria-hidden="true"><use href="#down"/></svg></a>
+          <a class="file" href="https://github.com/7KiLL/rookey/releases/latest/download/rookey-x86_64-linux.tar.gz"><span><b>x86_64, CPU</b><small>rookey-x86_64-linux.tar.gz</small></span><svg aria-hidden="true"><use href="#down"/></svg></a>
+          <p class="note">Also wants <span class="mono">wtype</span> to type the text, <span class="mono">grim</span> for screen terms, and the <span class="mono">input</span> group for the hotkey.</p>
+        </div>
+      </div>
+
+      <div class="panel" id="p-mac" role="tabpanel" aria-labelledby="tab-mac" hidden>
+        <div class="box first">
+          <div class="kicker">Apple silicon</div>
+          <h3>One line</h3>
+          <div class="cmd"><code>curl -fsSL https://rookey.click/install | sh</code><button type="button" data-copy>Copy</button></div>
+          <p class="note">The Metal build. Bind <span class="mono">rookey toggle</span> with skhd, Raycast or Shortcuts, and give that app Accessibility access so it can paste.</p>
+        </div>
+        <div class="box">
+          <h3>Or grab the binary</h3>
+          <a class="file" href="https://github.com/7KiLL/rookey/releases/latest/download/rookey-aarch64-macos.tar.gz"><span><b>macOS, Apple silicon (Metal)</b><small>rookey-aarch64-macos.tar.gz</small></span><svg aria-hidden="true"><use href="#down"/></svg></a>
+          <p class="note">Intel Macs: build from source.</p>
+        </div>
+      </div>
+
+      <div class="panel" id="p-win" role="tabpanel" aria-labelledby="tab-win" hidden>
+        <div class="box first">
+          <div class="kicker">Windows 10 and 11</div>
+          <h3>One line, in PowerShell</h3>
+          <div class="cmd"><code>irm https://rookey.click/install.ps1 | iex</code><button type="button" data-copy>Copy</button></div>
+          <p class="note">Picks the CUDA build when it finds an NVIDIA card (the zip brings the CUDA runtime), the CPU build otherwise, and puts it on your PATH.</p>
+        </div>
+        <div class="box">
+          <h3>Or grab the binary</h3>
+          <a class="file" href="https://github.com/7KiLL/rookey/releases/latest/download/rookey-x86_64-windows-cuda.zip"><span><b>x86_64, NVIDIA (CUDA)</b><small>rookey-x86_64-windows-cuda.zip</small></span><svg aria-hidden="true"><use href="#down"/></svg></a>
+          <a class="file" href="https://github.com/7KiLL/rookey/releases/latest/download/rookey-x86_64-windows.zip"><span><b>x86_64, CPU</b><small>rookey-x86_64-windows.zip</small></span><svg aria-hidden="true"><use href="#down"/></svg></a>
+          <p class="note">Unzip it anywhere on your PATH, then run <span class="mono">rookey setup</span>.</p>
+        </div>
+      </div>
+
+      <div class="panel" id="p-source" role="tabpanel" aria-labelledby="tab-source" hidden>
+        <div class="box first">
+          <h3>With cargo</h3>
+          <div class="lines">git clone https://github.com/7KiLL/rookey
+cd rookey
+cargo install --path .                  <span class="c"># CPU</span>
+cargo install --path . --features cuda  <span class="c"># NVIDIA</span>
+cargo install --path . --features metal <span class="c"># macOS</span></div>
+          <p class="note">Needs Rust, cmake and a C++ compiler; whisper.cpp is built from source.</p>
+        </div>
+        <div class="box">
+          <h3>Then</h3>
+          <div class="lines">rookey setup</div>
+          <p class="note">Checks the mic, then downloads the model you pick, or takes an ElevenLabs key instead.</p>
+        </div>
+      </div>
+
+      <p class="dl-foot soft"><a href="https://github.com/7KiLL/rookey/releases">All releases and their notes</a></p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="brand"><svg aria-hidden="true"><use href="#mark"/></svg>rookey</span>
+    <nav aria-label="Footer">
+      <a href="https://github.com/7KiLL/rookey">GitHub</a>
+      <a href="https://github.com/7KiLL/rookey#readme">Docs</a>
+      <a href="https://github.com/7KiLL/rookey/releases">Changelog</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+// the visitor's own system comes first; a phone, or anything unknown, gets Linux
+const os = (() => {
+  const ua = navigator.userAgent.toLowerCase();
+  const p = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || ua).toLowerCase();
+  if (p.includes("win")) return "win";
+  if (p.includes("mac") && !/iphone|ipad/.test(ua)) return "mac";
+  if (/android|iphone|ipad/.test(ua)) return null;
+  return "linux";
+})();
+const names = { linux: "Linux", mac: "macOS", win: "Windows" };
+if (os) {
+  document.querySelector("#cta span").textContent = `Download for ${names[os]}`;
+  document.querySelector("#others").textContent =
+    Object.keys(names).filter((k) => k !== os).map((k) => names[k]).join(", ") + ", or build it yourself";
+}
+
+const tabs = [...document.querySelectorAll('[role="tab"]')];
+function pick(tab) {
+  for (const t of tabs) {
+    const on = t === tab;
+    t.setAttribute("aria-selected", on);
+    t.tabIndex = on ? 0 : -1;
+    document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+  }
+}
+tabs.forEach((t, i) => {
+  t.addEventListener("click", () => pick(t));
+  t.addEventListener("keydown", (e) => {
+    const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+    if (!step) return;
+    const next = tabs[(i + step + tabs.length) % tabs.length];
+    pick(next);
+    next.focus();
+  });
+});
+pick(document.getElementById(`tab-${os || "linux"}`));
+
+for (const button of document.querySelectorAll("[data-copy]")) {
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(button.previousElementSibling.textContent);
+      button.textContent = "Copied";
+    } catch {
+      button.textContent = "Select it";
+    }
+    setTimeout(() => (button.textContent = "Copy"), 2000);
+  });
+}
+</script>
+</body>
+</html>
