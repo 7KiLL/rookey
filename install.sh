@@ -1,35 +1,59 @@
 #!/bin/sh
-# Install rookey: cmake, whisper model, binary (CUDA on NVIDIA Linux, Metal on macOS, else CPU).
-# Usage: ./install.sh   (env ROOKEY_MODEL_NAME to pick another ggml model)
+# Install rookey: the release build for this system, into ~/.local/bin. Nothing else is
+# downloaded: `rookey setup` asks for a speech model, or an ElevenLabs key instead.
+#
+#   curl -fsSL https://rookey.click/install | sh
+#
+# ROOKEY_VERSION=v0.1.0 picks a release (default: the latest), ROOKEY_BUILD=cpu skips the CUDA
+# build, ROOKEY_BIN_DIR puts it somewhere else. To build from source instead, see the README.
 set -eu
-cd "$(dirname "$0")"
 
-MODEL_NAME=${ROOKEY_MODEL_NAME:-ggml-large-v3-turbo.bin}
+REPO=7KiLL/rookey
+BIN_DIR=${ROOKEY_BIN_DIR:-$HOME/.local/bin}
 
-case "$(uname -s)" in
-  Darwin)
-    MODEL_DIR="$HOME/Library/Application Support/rookey"
-    FEATURES=metal
-    command -v cmake >/dev/null || brew install cmake
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64)
+    build=x86_64-linux
+    # the CUDA build runs on the NVIDIA driver plus the CUDA 13 runtime libraries
+    if [ "${ROOKEY_BUILD:-}" != cpu ] && command -v nvidia-smi >/dev/null 2>&1; then
+      if ldconfig -p 2>/dev/null | grep -q 'libcublas\.so\.13'; then
+        build=x86_64-linux-cuda
+      else
+        echo "note: NVIDIA card found, but no CUDA 13 runtime (libcublas.so.13); installing the CPU build."
+        echo "      Install CUDA 13 and run this again for the GPU build."
+      fi
+    fi
     ;;
+  Darwin-arm64) build=aarch64-macos ;;
   *)
-    MODEL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/rookey"
-    [ -x /opt/cuda/bin/nvcc ] && PATH="/opt/cuda/bin:$PATH"
-    if command -v nvcc >/dev/null; then FEATURES=cuda; else FEATURES=""; fi
-    command -v cmake >/dev/null || sudo pacman -S --needed cmake  # ponytail: Arch only; other distros install cmake by hand
-    command -v wtype >/dev/null || echo "note: 'rookey toggle' needs wtype to type text"
+    echo "rookey: no release build for $(uname -s) $(uname -m). Build it from source, see the README." >&2
+    exit 1
     ;;
 esac
 
-if [ ! -f "$MODEL_DIR/$MODEL_NAME" ]; then
-  mkdir -p "$MODEL_DIR"
-  curl -fL -o "$MODEL_DIR/$MODEL_NAME.part" \
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$MODEL_NAME"
-  mv "$MODEL_DIR/$MODEL_NAME.part" "$MODEL_DIR/$MODEL_NAME"  # no half-downloaded model on Ctrl-C
+if [ -n "${ROOKEY_VERSION:-}" ]; then
+  url="https://github.com/$REPO/releases/download/$ROOKEY_VERSION/rookey-$build.tar.gz"
+else
+  url="https://github.com/$REPO/releases/latest/download/rookey-$build.tar.gz"
 fi
 
-echo "building with features: ${FEATURES:-cpu}"
-cargo install --path . ${FEATURES:+--features "$FEATURES"}
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+echo "downloading rookey-$build"
+curl -fL --progress-bar -o "$tmp/rookey.tar.gz" "$url"
+tar -xzf "$tmp/rookey.tar.gz" -C "$tmp"
+mkdir -p "$BIN_DIR"
+# a new file then a rename: a running `rookey listen` keeps its old binary until it restarts
+install -m755 "$tmp/rookey" "$BIN_DIR/rookey.new"
+mv "$BIN_DIR/rookey.new" "$BIN_DIR/rookey"
+echo "installed $BIN_DIR/rookey"
 
-echo "done. try: rookey   (talk, then Enter)"
-[ "$MODEL_NAME" = ggml-large-v3-turbo.bin ] || echo "set ROOKEY_MODEL=\"$MODEL_DIR/$MODEL_NAME\""
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *) echo "note: $BIN_DIR is not on your PATH yet; add it to your shell's profile." ;;
+esac
+if [ "$(uname -s)" = Linux ] && ! command -v wtype >/dev/null 2>&1; then
+  echo "note: install wtype too, rookey types the text with it."
+fi
+echo
+echo "next: rookey setup   (checks your mic, then a speech model or an ElevenLabs key)"
