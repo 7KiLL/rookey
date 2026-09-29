@@ -3,6 +3,7 @@ name = "rookey"
 version = "0.1.0"
 edition = "2024"
 description = "Local push-to-talk dictation: record, transcribe with whisper.cpp, type it out"
+license = "Apache-2.0"
 
 [dependencies]
 cpal = "0.18"

@@ -18,6 +18,7 @@
 <p align="center">
   <a href="https://github.com/7KiLL/rookey/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/7KiLL/rookey?style=flat-square&color=C0342B&label=release"></a>
   <img alt="Linux, macOS, Windows" src="https://img.shields.io/badge/runs_on-Linux_·_macOS_·_Windows-17231E?style=flat-square">
+  <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-4A5B52?style=flat-square"></a>
   <img alt="Written in Rust" src="https://img.shields.io/badge/Rust-whisper.cpp-4A5B52?style=flat-square">
 </p>
 
@@ -177,3 +178,7 @@ macOS: bind `rookey toggle` with skhd/Raycast/Shortcuts. The calling app needs A
 ## Development
 
 `just` lists the commands: `just install` builds, replaces `~/.local/bin/rookey` and restarts the hotkey listener, `just ui` does that and opens a fresh settings page, `just logs` follows the listener. `FEATURES=` builds without CUDA, `FEATURES=metal` for macOS.
+
+## License
+
+[Apache-2.0](LICENSE).
