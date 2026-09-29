@@ -33,17 +33,6 @@ const KEY_NAMES = {
   Insert: "Insert", Delete: "Delete", Pause: "Pause", ScrollLock: "Scroll_Lock", PrintScreen: "Print",
 };
 
-/** This browser's own memory, for choices that only matter here. Off in some private windows. */
-const remember = (key, value) => {
-  try {
-    if (value === undefined) return localStorage.getItem(key);
-    localStorage.setItem(key, value);
-  } catch {
-    // nothing to remember it in: it starts from the default next time
-  }
-  return null;
-};
-
 // The link carries a token. Keep it for reloads and take it out of the address bar.
 let token = new URLSearchParams(location.search).get("t");
 try {
@@ -61,7 +50,7 @@ const ui = reactive({
   theme: "system", // both come from the config once the state is here
   stopped: false,
   status: { key: "status.loading", vars: {}, problem: false },
-  advanced: remember("rookey-advanced") === "open",
+  advanced: false, // from the config too: every `rookey ui` is a new origin, with nothing kept
   otherLanguage: false,
   desktop: null,
   edit: null, // the rewriting instruction while it is typed, before it is saved
@@ -104,13 +93,34 @@ function say(key, vars = {}, problem = false) {
   ui.status = { key, vars, problem };
 }
 
+/**
+ * Takes a new state from the server into ui.s, changing only what differs. Every slot that
+ * reads a replaced part is drawn again, and a list drawn again loses focus and what is typed.
+ */
+function merge(target, source, whole = true) {
+  for (const [key, value] of Object.entries(source)) {
+    const old = target[key];
+    const plain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+    if (plain(old) && plain(value)) merge(old, value);
+    else if (JSON.stringify(old) !== JSON.stringify(value)) target[key] = value;
+  }
+  // a whole state drops what it no longer has; a part leaves the rest alone
+  if (whole) for (const key of Object.keys(target)) if (!(key in source)) delete target[key];
+}
+
+/** The new state from the server, into the page. */
+function take(state) {
+  if (ui.s) merge(ui.s, state);
+  else ui.s = state;
+}
+
 /** Sends a change. What comes back is the new state, or an answer to look at. */
 async function send(path, body, saying = "status.saving", vars = {}) {
   say(saying, vars);
   try {
     const reply = await call(path, body);
-    if (reply.values) ui.s = reply;
-    if (reply.trial) ui.s.trial = reply.trial;
+    if (reply.values) take(reply);
+    else if (reply.trial) merge(ui.s.trial, reply.trial);
     watch();
     return reply;
   } catch (e) {
@@ -202,7 +212,8 @@ function Header() {
   // ponytail: a new language reloads the page. Arrow can't swap a whole tree's words in place,
   // and tearing the tree down leaves it running watchers whose slots are gone.
   const language = async (value) => {
-    if (ui.s && (await save({ ROOKEY_UI_LANG: value }))) location.reload();
+    // the token rides along: with sessionStorage off, a bare reload would lock the page
+    if (ui.s && (await save({ ROOKEY_UI_LANG: value }))) location.replace(`/?t=${encodeURIComponent(token || "")}`);
   };
   return html`
     <header class="top">
@@ -222,6 +233,7 @@ function Header() {
           </select>
         </label>
       </div>
+      ${() => (ui.ready ? html`${shell("ROOKEY_UI_THEME")}${shell("ROOKEY_UI_LANG")}` : "")}
     </header>`;
 }
 
@@ -279,10 +291,8 @@ function checkWords(c) {
   let title = t(`check.${c.id}.title`);
   let missing = tx(`check.${c.id}.missing`, { engine });
   if (c.id === "mic" && c.title.includes(": ")) title = t("check.mic.named", { name: c.title.split(": ").slice(1).join(": ") });
-  if (c.id === "screen") {
-    const tools = ["grim", ...(reader() === "ocr" ? ["tesseract"] : [])].filter((tool) => !ui.s.tools[tool]);
-    missing = tx("check.screen.missing", { tools: listOf(tools) });
-  }
+  // which tools, as the server found them with the environment winning over the config
+  if (c.id === "screen") missing = tx("check.screen.missing", { tools: listOf(c.tools || []) });
   return { title, missing };
 }
 
@@ -316,7 +326,7 @@ function Checks() {
 async function checkAgain() {
   say("status.checking");
   try {
-    ui.s = await call("/api/state");
+    take(await call("/api/state"));
     say(ui.s.checks.every((c) => c.ok) ? "status.all-here" : "status.still-missing");
   } catch (e) {
     say("status.failed", { why: e.message }, true);
@@ -410,7 +420,7 @@ function ModelRow(m) {
       </span>
       <div class="row-wide" hidden="${() => !running()}">
         <progress class="progress" max="100" aria-label="${t("download.label", { name: m.name })}"
-          value="${() => (part() * 100).toFixed(1)}"></progress>
+          value="${() => Math.round(part() * 1000) / 10}"></progress>
         <p class="progress-text">${() =>
           download()?.total ? t("download.progress", { done: mb(download().done), total: mb(download().total) }) : t("download.connecting")}</p>
       </div>
@@ -500,7 +510,8 @@ function needsKey(id) {
 function Advanced() {
   const toggled = (e) => {
     ui.advanced = e.target.open;
-    remember("rookey-advanced", ui.advanced ? "open" : "");
+    // the page opening it as it draws is not a change to save
+    if (ui.advanced !== isOn(values().ROOKEY_UI_ADVANCED)) save({ ROOKEY_UI_ADVANCED: ui.advanced ? "1" : "" });
   };
   const editText = () => ui.edit ?? values().ROOKEY_EDIT;
   return html`
@@ -834,12 +845,14 @@ function Specimen() {
     const name = terms() ? html`<mark>spawn_model_loader</mark>` : html`<span>spawn model loader</span>`;
     return tx(clean() ? "typed.clean" : "typed.raw", { name });
   };
-  // a new caret, keyed by the line, each time the typed line changes: its blink starts afresh
-  let first = true;
+  // a new caret, keyed by the line, each time the typed line changes: its blink starts afresh.
+  // A redraw with the same line keeps the class it had, so an unrelated change doesn't blink it.
+  let shown = null;
+  let fresh = false;
   const caret = () => {
     const line = `${clean()}${terms()}`;
-    const fresh = !first;
-    first = false;
+    if (shown !== null && line !== shown) fresh = true;
+    shown = line;
     return [html`<span class="${fresh ? "caret is-fresh" : "caret"}" aria-hidden="true"></span>`.key(line)];
   };
   return html`
@@ -906,13 +919,13 @@ async function watch() {
     }
     const wasDownloading = ui.s.models.download?.running;
     const wasTrying = ui.s.trial.phase;
-    ui.s.models.download = progress.download;
-    ui.s.trial = progress.trial;
+    merge(ui.s.models, { download: progress.download }, false);
+    merge(ui.s.trial, progress.trial);
     if (wasTrying !== progress.trial.phase && progress.trial.phase === "done") say("trial.s.done");
     if (wasTrying !== progress.trial.phase && progress.trial.phase === "failed") say("trial.s.failed", {}, true);
     if (wasDownloading && !progress.download) {
       // it landed: the list of models on disk has changed
-      ui.s = await call("/api/state").catch(() => ui.s);
+      take(await call("/api/state").catch(() => ui.s));
       say(ui.s.models.found ? "download.in-use" : "download.pick");
     }
   }
@@ -950,16 +963,22 @@ window.addEventListener(
 
 async function start() {
   // drawn once, in the language and theme from the config; after that the parts update in place
+  // a line to look at while the server gathers the state, which can take a moment
+  $("#app").replaceChildren(Object.assign(document.createElement("p"), { className: "loading", textContent: t("status.loading") }));
   let failed = null;
   try {
     ui.s = await call("/api/state");
-    ui.theme = values().ROOKEY_UI_THEME || "system";
-    ui.lang = pickLang(values().ROOKEY_UI_LANG);
+    // the shell wins over the config, here as everywhere
+    const pref = (name) => ui.s.env[name] ?? values()[name];
+    ui.theme = pref("ROOKEY_UI_THEME") || "system";
+    ui.lang = pickLang(pref("ROOKEY_UI_LANG"));
+    ui.advanced = isOn(values().ROOKEY_UI_ADVANCED);
     ui.ready = true;
   } catch (e) {
     failed = e;
   }
   applyLook();
+  $("#app").replaceChildren();
   Page()($("#app"));
   if (failed) {
     say("status.failed", { why: failed.message }, true);

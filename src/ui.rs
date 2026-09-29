@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader};
 
 /// The settings the page may change. Keys are not among them, they have a file of their own.
-const SETTINGS: [&str; 11] = [
+const SETTINGS: [&str; 12] = [
     "ROOKEY_BACKEND",
     "ROOKEY_LANG",
     "ROOKEY_MODEL",
@@ -30,6 +30,7 @@ const SETTINGS: [&str; 11] = [
     // the settings page's own look; empty follows the system and the browser
     "ROOKEY_UI_THEME",
     "ROOKEY_UI_LANG",
+    "ROOKEY_UI_ADVANCED", // whether Advanced is open
 ];
 // kept in the config, not the browser: every `rookey ui` gets a new port, so a new origin
 const UI_THEMES: [&str; 2] = ["light", "dark"];
@@ -421,6 +422,10 @@ fn checks(get: &dyn Fn(&str) -> String, model_found: bool, has_key: bool) -> Vec
                 &format!("{} missing, so the screen can't be read.", missing.join(" and ") + if missing.len() > 1 { " are" } else { " is" }),
                 fix.and_then(|p| Some(format!("{} {p}", installer()?))),
             );
+            // by name too, for the page to word in its own language
+            if let Some(last) = checks.last_mut() {
+                last["tools"] = json!(missing);
+            }
         }
     }
     checks
@@ -859,8 +864,17 @@ mod tests {
         let en = keys("en");
         assert!(en.len() > 100);
         assert_eq!(en, keys("uk"));
-        for lang in UI_LANGS {
-            assert!(page.contains(&format!("const {lang} = {{")), "{lang} is allowed but not written");
-        }
+        // the languages are named in three places, and all three must agree
+        let listed = |start: &str| -> Vec<String> {
+            let at = page.find(start).unwrap() + start.len();
+            let body = &page[at..at + page[at..].find('}').unwrap()];
+            let mut ids: Vec<String> = body.split(',').filter_map(|p| Some(p.split(':').next()?.trim().to_string())).filter(|p| !p.is_empty()).collect();
+            ids.sort();
+            ids
+        };
+        let mut allowed: Vec<String> = UI_LANGS.iter().map(|l| l.to_string()).collect();
+        allowed.sort();
+        assert_eq!(listed("export const LOCALES = {"), allowed, "LOCALES in i18n.js and UI_LANGS differ");
+        assert_eq!(listed("const WORDS = {"), allowed, "WORDS in i18n.js and UI_LANGS differ");
     }
 }

@@ -224,6 +224,14 @@ h1 {
   letter-spacing: -0.02em;
 }
 
+/* shown while the first state loads, before the page is drawn */
+.loading {
+  padding: 2.5rem 1rem;
+  max-width: 36rem;
+  margin: 0 auto;
+  color: var(--ink-soft);
+}
+
 .status {
   margin-top: 0.5rem;
   color: var(--ink-soft);
@@ -351,7 +359,7 @@ h4 {
 }
 
 /* set apart from the hotkey form above it */
-#sounds-field {
+.switch:has(> #sounds) {
   margin-top: 1.5rem;
 }
 

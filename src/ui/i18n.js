@@ -1,5 +1,6 @@
 // The page's words, by language. `{name}` is filled in by t() or tx().
-// A new language is one more block here and one more entry in LOCALES.
+// A new language is one more block here, one more entry in LOCALES and WORDS, and one in
+// UI_LANGS in ui.rs; a test there holds the three lists together.
 // ponytail: what the server words itself (errors, "blocked" reasons, a compositor's own
 // messages) stays English; the server would have to send keys for those.
 
@@ -41,7 +42,7 @@ const en = {
   "check.wtype.title": "Typing into windows",
   "check.wtype.missing": "wtype is missing, so the text can't be typed for you.",
   "check.screen.title": "Reading the screen",
-  "check.screen.missing": "{tools} missing, so the screen can't be read.",
+  "check.screen.missing": "The screen can't be read without {tools}.",
   "copy": "Copy",
   "copied": "Copied",
   "copy.failed": "Select it and copy",
@@ -280,7 +281,7 @@ const uk = {
   "check.wtype.title": "Набір тексту у вікнах",
   "check.wtype.missing": "Бракує wtype, тож текст не може набиратися за вас.",
   "check.screen.title": "Читання екрана",
-  "check.screen.missing": "Бракує {tools}, тож екран не прочитати.",
+  "check.screen.missing": "Без {tools} екран не прочитати.",
   "copy": "Копіювати",
   "copied": "Скопійовано",
   "copy.failed": "Виділіть і скопіюйте",
@@ -487,7 +488,6 @@ const WORDS = { en, uk };
 let lang = "en";
 
 export const setLang = (code) => (lang = code in WORDS ? code : "en");
-export const getLang = () => lang;
 
 /** The language to start in: the one saved in the config, else the browser's first we have. */
 export function pickLang(saved) {
@@ -513,8 +513,3 @@ export function tx(key, vars = {}) {
 
 /** Whether a key has a word of its own, so text the server sent can be swapped for it. */
 export const has = (key) => key in en;
-
-// Every language has every sentence the English has.
-export function missing() {
-  return Object.keys(WORDS).flatMap((l) => Object.keys(en).filter((k) => !(k in WORDS[l])).map((k) => `${l}:${k}`));
-}
