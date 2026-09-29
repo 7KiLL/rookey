@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader};
 
 /// The settings the page may change. Keys are not among them, they have a file of their own.
-const SETTINGS: [&str; 9] = [
+const SETTINGS: [&str; 11] = [
     "ROOKEY_BACKEND",
     "ROOKEY_LANG",
     "ROOKEY_MODEL",
@@ -27,7 +27,13 @@ const SETTINGS: [&str; 9] = [
     "ROOKEY_READER",
     "ROOKEY_QUIET",
     "ROOKEY_NO_NOTIFICATIONS",
+    // the settings page's own look; empty follows the system and the browser
+    "ROOKEY_UI_THEME",
+    "ROOKEY_UI_LANG",
 ];
+// kept in the config, not the browser: every `rookey ui` gets a new port, so a new origin
+const UI_THEMES: [&str; 2] = ["light", "dark"];
+const UI_LANGS: [&str; 2] = ["en", "uk"]; // the languages in ui/i18n.js
 const BACKENDS: [&str; 3] = ["local", "elevenlabs", "elevenlabs-realtime"];
 
 /// (id, name, the setting its key goes by, what rookey uses it for, where keys are made)
@@ -59,10 +65,12 @@ const MAX_EDIT: usize = 2000; // ElevenLabs' limit for transcript_edit
 const WOFF2: &str = "font/woff2";
 
 /// (path, content type, body), all baked into the binary: the page looks the same anywhere.
-const ASSETS: [(&str, &str, &[u8]); 8] = [
+const ASSETS: [(&str, &str, &[u8]); 10] = [
     ("/", "text/html; charset=utf-8", include_bytes!("ui/index.html")),
     ("/app.css", "text/css; charset=utf-8", include_bytes!("ui/app.css")),
     ("/app.js", "text/javascript; charset=utf-8", include_bytes!("ui/app.js")),
+    ("/i18n.js", "text/javascript; charset=utf-8", include_bytes!("ui/i18n.js")),
+    ("/arrow.js", "text/javascript; charset=utf-8", include_bytes!("ui/arrow.js")),
     ("/icon.svg", "image/svg+xml", include_bytes!("ui/icon.svg")),
     ("/font/commissioner-latin.woff2", WOFF2, include_bytes!("ui/commissioner-latin.woff2")),
     ("/font/commissioner-cyrillic.woff2", WOFF2, include_bytes!("ui/commissioner-cyrillic.woff2")),
@@ -516,6 +524,12 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
                     return Err(format!("{value} isn't a language code, those are two or three letters like en or uk.").into());
                 }
             }
+            "ROOKEY_UI_THEME" if !value.is_empty() && !UI_THEMES.contains(&value.as_str()) => {
+                return Err(format!("There is no {value} theme, only light and dark.").into());
+            }
+            "ROOKEY_UI_LANG" if !value.is_empty() && !UI_LANGS.contains(&value.as_str()) => {
+                return Err(format!("The page isn't written in {value}.").into());
+            }
             "ROOKEY_EDIT" if value.chars().count() > MAX_EDIT => {
                 return Err(format!(
                     "The rewrite instruction is {} characters long, ElevenLabs takes {MAX_EDIT}.",
@@ -822,10 +836,31 @@ mod tests {
         assert_eq!(masked("short-key"), "");
         assert_eq!(masked("a1b2-0123456789abcdef"), "••••••••cdef"); // not a kind, part of the key
         assert!(changes(br#"{"ROOKEY_SANITIZE": 1}"#).is_err());
+        assert!(changes(br#"{"ROOKEY_UI_THEME": "neon"}"#).is_err());
+        assert!(changes(br#"{"ROOKEY_UI_LANG": "xx"}"#).is_err());
+        assert_eq!(changes(br#"{"ROOKEY_UI_THEME": "dark"}"#).unwrap(), [change("ROOKEY_UI_THEME", "dark")]);
         assert!(changes(format!(r#"{{"ROOKEY_EDIT": "{}"}}"#, "x".repeat(2001)).as_bytes()).is_err());
         let ok = changes(br#"{"ROOKEY_EDIT": " one\ntwo ", "ROOKEY_BACKEND": ""}"#).unwrap();
         assert!(ok.contains(&change("ROOKEY_EDIT", "one two")));
         assert!(ok.contains(&change("ROOKEY_BACKEND", "")));
         assert!(same("abc", "abc") && !same("abc", "abd") && !same("abc", "ab"));
+    }
+
+    #[test]
+    fn every_language_has_every_sentence() {
+        let page = include_str!("ui/i18n.js");
+        let keys = |block: &str| -> Vec<String> {
+            let start = page.find(&format!("const {block} = {{")).unwrap();
+            let body = &page[start..start + page[start..].find("\n};").unwrap()];
+            let mut keys: Vec<String> = body.lines().filter_map(|l| Some(l.trim().strip_prefix('"')?.split('"').next()?.to_string())).collect();
+            keys.sort();
+            keys
+        };
+        let en = keys("en");
+        assert!(en.len() > 100);
+        assert_eq!(en, keys("uk"));
+        for lang in UI_LANGS {
+            assert!(page.contains(&format!("const {lang} = {{")), "{lang} is allowed but not written");
+        }
     }
 }

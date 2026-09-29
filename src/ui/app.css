@@ -56,8 +56,9 @@
   --column: 33rem;
 }
 
+/* dark follows the system unless the page is set to light; data-theme="dark" forces it */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --paper: #121A16;
     --paper-raised: #1B2621;
     --ink: #E4ECDD;
@@ -69,6 +70,19 @@
     --ok: #7FC39B;
     color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --paper: #121A16;
+  --paper-raised: #1B2621;
+  --ink: #E4ECDD;
+  --ink-soft: #9DB0A3;
+  --rule: #2F4137;
+  --red: #F0645A;
+  --ink-hover: #C9D6C4;
+  --red-hover: #D9544B;
+  --ok: #7FC39B;
+  color-scheme: dark;
 }
 
 *,
@@ -218,6 +232,37 @@ h1 {
 
 .status.is-problem {
   color: var(--red);
+}
+
+/* theme and language: this browser's choices, quiet under the status line */
+.prefs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin-top: 1rem;
+  color: var(--ink-soft);
+  font-size: 0.8125rem;
+}
+
+.pref {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pref select {
+  min-height: 2rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 0.375rem;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.pref select:hover {
+  border-color: var(--ink-soft);
 }
 
 /* ---- groups ----------------------------------------------------------- */
@@ -437,18 +482,29 @@ input[type="checkbox"] {
   padding-block: 0.375rem;
 }
 
+/* a native <progress>: its value is an attribute, which the CSP allows where a style isn't */
 .progress {
+  display: block;
+  width: 100%;
   height: 0.375rem;
+  border: 0;
   border-radius: 0.1875rem;
   background: var(--rule);
   overflow: hidden;
+  appearance: none;
 }
 
-.progress-done {
-  width: 0;
-  height: 100%;
+.progress::-webkit-progress-bar {
+  background: var(--rule);
+}
+
+.progress::-webkit-progress-value {
   background: var(--ink);
   transition: width 400ms linear;
+}
+
+.progress::-moz-progress-bar {
+  background: var(--ink);
 }
 
 .progress-text {

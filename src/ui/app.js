@@ -1,67 +1,26 @@
 // rookey settings. Every change is saved at once through the local server behind `rookey ui`.
-// The page draws itself from the state the server sends back after each change.
+// The page is arrow.js templates over one reactive store: the server's state, and the choices
+// that live in the page until there is something to save.
+
+import { html, reactive, nextTick } from "/arrow.js";
+import { LOCALES, has, pickLang, setLang, t, tx } from "/i18n.js";
 
 const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
+const code = (text) => html`<code>${text}</code>`;
 
-/** An element with properties and children; strings become text. */
-function el(tag, props = {}, ...children) {
-  const node = Object.assign(document.createElement(tag), props);
-  node.append(...children.filter((child) => child !== null && child !== false));
-  return node;
-}
-
-const code = (text) => el("code", {}, text);
-
-const LANGUAGES = [
-  ["en", "English"],
-  ["uk", "Ukrainian"],
-  ["ru", "Russian"],
-  ["de", "German"],
-  ["es", "Spanish"],
-  ["fr", "French"],
-  ["pl", "Polish"],
-];
-const LANGUAGE_NAMES = Object.fromEntries(LANGUAGES);
+const LANGUAGES = ["en", "uk", "ru", "de", "es", "fr", "pl"];
 
 const READERS = {
-  ocr: {
-    name: "This machine",
-    provider: null,
-    about:
-      "tesseract reads the screenshot here, and only the words it picks go to the engine. It finds names written like_this, likeThis or LIKE_THIS, and misses jargon in plain lowercase.",
-  },
-  openai: {
-    name: "OpenAI",
-    provider: "openai",
-    about:
-      "The screenshot goes to OpenAI, where a vision model picks the terms, plain lowercase jargon included. Whatever is on your screen at that moment is in it.",
-  },
-  anthropic: {
-    name: "Claude",
-    provider: "anthropic",
-    about:
-      "The screenshot goes to Anthropic, where Claude picks the terms, plain lowercase jargon included. Whatever is on your screen at that moment is in it.",
-  },
+  ocr: { name: () => t("reader.ocr"), provider: null },
+  openai: { name: () => "OpenAI", provider: "openai" },
+  anthropic: { name: () => "Claude", provider: "anthropic" },
 };
 
 // For desktops whose config rookey doesn't write: the line to add by hand.
 const MANUAL = {
-  niri: {
-    name: "niri",
-    snippet: 'Mod+Shift+D repeat=false { spawn "rookey" "toggle"; }',
-    hint: "Goes inside binds { } in ~/.config/niri/config.kdl.",
-  },
-  hyprland: {
-    name: "Hyprland",
-    snippet: 'hl.bind("SUPER + SHIFT + D", hl.dsp.exec_cmd("rookey toggle"))',
-    hint: "Goes in ~/.config/hypr/hyprland.lua. Before Hyprland 0.55 it is bind = SUPER SHIFT, D, exec, rookey toggle in hyprland.conf.",
-  },
-  macos: {
-    name: "macOS",
-    snippet: "cmd + shift - d : rookey toggle",
-    hint: "An skhd binding, for ~/.config/skhd/skhdrc. Raycast and Shortcuts can run rookey toggle too. Whatever runs it needs the Accessibility permission.",
-  },
+  niri: { name: "niri", snippet: 'Mod+Shift+D repeat=false { spawn "rookey" "toggle"; }' },
+  hyprland: { name: "Hyprland", snippet: 'hl.bind("SUPER + SHIFT + D", hl.dsp.exec_cmd("rookey toggle"))' },
+  macos: { name: "macOS", snippet: "cmd + shift - d : rookey toggle" },
 };
 
 // What a key is called in a compositor's config, by the code the browser reports.
@@ -74,6 +33,17 @@ const KEY_NAMES = {
   Insert: "Insert", Delete: "Delete", Pause: "Pause", ScrollLock: "Scroll_Lock", PrintScreen: "Print",
 };
 
+/** This browser's own memory, for choices that only matter here. Off in some private windows. */
+const remember = (key, value) => {
+  try {
+    if (value === undefined) return localStorage.getItem(key);
+    localStorage.setItem(key, value);
+  } catch {
+    // nothing to remember it in: it starts from the default next time
+  }
+  return null;
+};
+
 // The link carries a token. Keep it for reloads and take it out of the address bar.
 let token = new URLSearchParams(location.search).get("t");
 try {
@@ -84,15 +54,30 @@ try {
 }
 history.replaceState(null, "", "/");
 
-let state = null;
-let stopped = false;
-// choices that live in the page until there is something to save
-const view = {
+const ui = reactive({
+  s: null, // the state from the server
+  ready: false, // drawn once the first state is here; after that the parts that read it update
+  lang: setLang(pickLang()),
+  theme: "system", // both come from the config once the state is here
+  stopped: false,
+  status: { key: "status.loading", vars: {}, problem: false },
+  advanced: remember("rookey-advanced") === "open",
   otherLanguage: false,
   desktop: null,
+  edit: null, // the rewriting instruction while it is typed, before it is saved
   provider: null, // { id, where: "engine" | "keys", doing: "edit" | "remove" }
   hotkey: { way: null, editing: false, chord: null, file: null, files: false, taken: null, problem: "", pressing: false },
-};
+});
+
+/** Theme and language go on <html>: CSS picks the tokens, the browser the hyphenation. */
+function applyLook() {
+  const root = document.documentElement;
+  if (ui.theme === "system") delete root.dataset.theme;
+  else root.dataset.theme = ui.theme;
+  root.lang = setLang(ui.lang);
+  document.title = t("title");
+}
+applyLook();
 
 async function call(path, body) {
   const options = body ? { method: "POST", body: JSON.stringify(body) } : {};
@@ -101,7 +86,7 @@ async function call(path, body) {
     response = await fetch(`${path}?t=${encodeURIComponent(token || "")}`, options);
   } catch {
     stop();
-    throw new Error("rookey ui has stopped.");
+    throw new Error(t("stopped.short"));
   }
   const reply = await response.json();
   if (!response.ok) throw new Error(reply.error);
@@ -109,634 +94,809 @@ async function call(path, body) {
 }
 
 function stop() {
-  if (stopped) return;
-  stopped = true;
-  $("#stopped").hidden = false;
+  if (ui.stopped) return;
+  ui.stopped = true;
   document.body.classList.add("is-stopped");
-  $("#settings").inert = true;
-  $("#specimen").inert = true;
 }
 
-function say(text, problem = false) {
-  const status = $("#status");
-  status.textContent = text;
-  status.classList.toggle("is-problem", problem);
+/** The line under the heading. Kept as a key, so it follows a change of language. */
+function say(key, vars = {}, problem = false) {
+  ui.status = { key, vars, problem };
 }
 
 /** Sends a change. What comes back is the new state, or an answer to look at. */
-async function send(path, body, saying = "Saving") {
-  say(saying);
+async function send(path, body, saying = "status.saving", vars = {}) {
+  say(saying, vars);
   try {
     const reply = await call(path, body);
-    if (reply.values) state = reply;
-    if (reply.trial) state.trial = reply.trial;
+    if (reply.values) ui.s = reply;
+    if (reply.trial) ui.s.trial = reply.trial;
+    watch();
     return reply;
   } catch (e) {
-    say(`That didn't work. ${e.message}`, true);
+    say("status.failed", { why: e.message }, true);
     return null;
   }
 }
 
 async function save(changes) {
   const saved = await send("/api/save", changes);
-  if (saved) {
-    say(`Saved to ${state.path}`);
-    draw();
-  }
+  if (saved) say("status.saved", { path: ui.s.path });
   return Boolean(saved);
 }
 
 const isOn = (value) => value !== "" && value !== "0" && value !== "false";
-const engine = () => state.values.ROOKEY_BACKEND || "local";
+const values = () => ui.s.values;
+const engine = () => values().ROOKEY_BACKEND || "local";
 const cloud = () => engine() !== "local";
-const reader = () => (state.values.ROOKEY_READER in READERS ? state.values.ROOKEY_READER : "ocr");
-const provider = (id) => state.providers.find((p) => p.id === id);
+const reader = () => (values().ROOKEY_READER in READERS ? values().ROOKEY_READER : "ocr");
+const provider = (id) => ui.s.providers.find((p) => p.id === id);
 const hasKey = (id) => provider(id).saved || provider(id).env;
-const size = (mb) => (mb >= 1000 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
+const number = (n, digits = 0) => n.toLocaleString(ui.lang, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+const size = (mb) => (mb >= 1000 ? t("size.gb", { n: number(mb / 1024, 1) }) : t("size.mb", { n: mb }));
+const listOf = (items) => new Intl.ListFormat(ui.lang, { type: "conjunction" }).format(items);
+
+/** A language's name in the page's language: "German", or "німецька". */
+function languageName(id, capital = false) {
+  let name = id;
+  try {
+    name = new Intl.DisplayNames([ui.lang], { type: "language" }).of(id) || id;
+  } catch {
+    // not a code Intl knows: shown as typed
+  }
+  return capital ? name[0].toLocaleUpperCase(ui.lang) + name.slice(1) : name;
+}
 
 function termsMode() {
-  const value = state.values.ROOKEY_CONTEXT;
+  const value = values().ROOKEY_CONTEXT;
   if (!isOn(value)) return "off";
   return value === "1" || value === "true" ? "screen" : "command";
 }
 
 /** The picked languages, "en,uk" as ["en", "uk"]; none picked means any. */
-const languages = () => (state.values.ROOKEY_LANG || "").split(",").filter((l) => l && l !== "auto");
+const languages = () => (values().ROOKEY_LANG || "").split(",").filter((l) => l && l !== "auto");
 
-/** Sets a field from the saved state, unless it is being typed in right now. */
-function fill(input, value) {
-  if (document.activeElement !== input) input.value = value;
-}
-
-function choose(name, value) {
-  for (const input of $$(`input[name="${name}"]`)) input.checked = input.value === value;
-}
-
-function chip(name, value, text) {
-  return el("label", { className: "chip" }, el("input", { type: "radio", name, value }), el("span", {}, text));
-}
-
-/** "OpenAI needs a key" with the way to the place where keys go. */
-function needsKey(node, id) {
-  const missing = !hasKey(id);
-  node.hidden = !missing;
-  node.className = "problem";
-  if (missing) {
-    const link = el("a", { href: "#providers" }, "Add one under Advanced, Keys");
-    link.addEventListener("click", () => {
-      $("#advanced").open = true;
-      view.provider = { id, where: "keys", doing: "edit" };
-      drawProviders();
-    });
-    node.replaceChildren(`${provider(id).name} needs a key, and there is none yet. `, link, ".");
-  }
-}
-
-function draw() {
-  drawChecks();
-  drawEngine();
-  drawModels();
-  drawLanguage();
-  drawCleanup();
-  drawTerms();
-  drawHotkey();
-  drawProviders();
-  drawShell();
-  drawSpecimen();
-  drawTrial();
-  watch();
-}
-
-function drawChecks() {
-  const failing = state.checks.filter((c) => !c.ok);
-  $("#setup").hidden = failing.length === 0;
-  $("#ready").hidden = failing.length !== 0;
-  $("#checks").replaceChildren(
-    ...state.checks.map((c) => {
-      const fix = c.fix
-        ? el("span", { className: "with-button" }, el("code", { className: "fix" }, c.fix), copyButton(() => c.fix))
-        : null;
-      return el(
-        "li",
-        { className: `check ${c.ok ? "is-ok" : "is-missing"}` },
-        el("span", { className: "check-mark", ariaLabel: c.ok ? "Ready" : "Missing", role: "img" }),
-        el(
-          "span",
-          { className: "row-text" },
-          el("span", { className: "choice-name" }, c.title),
-          c.ok ? null : el("span", { className: "choice-about" }, ...linkEngine(c.missing)),
-          fix,
-        ),
-      );
-    }),
-  );
-}
-
-/** "…under Engine." with Engine a link to that section. */
-function linkEngine(text) {
-  const [before, after] = text.split("under Engine");
-  return after === undefined ? [text] : [before, "under ", el("a", { href: "#engine-title" }, "Engine"), after];
-}
-
+/** A button that copies, and says so for a moment. */
 function copyButton(text) {
-  const button = el("button", { type: "button", className: "button" }, "Copy");
-  button.addEventListener("click", async () => {
+  const b = reactive({ label: "copy" });
+  const copy = async () => {
     try {
       await navigator.clipboard.writeText(text());
-      button.textContent = "Copied";
+      b.label = "copied";
     } catch {
-      button.textContent = "Select it and copy";
+      b.label = "copy.failed";
     }
-    setTimeout(() => (button.textContent = "Copy"), 2000);
-  });
-  return button;
-}
-
-function drawEngine() {
-  choose("engine", cloud() ? "cloud" : "local");
-  $("#stream").checked = engine() === "elevenlabs-realtime";
-  $("#engine-key").hidden = !cloud();
-  $("#stream-field").hidden = !cloud();
-  $("#engine-key").replaceChildren(...(cloud() ? [providerRow(provider("elevenlabs"), "engine")] : []));
-
-  // on this machine: which model, or the download of the usual one
-  const models = state.models;
-  const using = models.installed.find((m) => m.path === models.in_use);
-  const usual = models.catalog[0];
-  $("#engine-model").hidden = cloud() || !models.found;
-  if (using) $("#engine-model").textContent = `Uses ${using.name || using.file}, ${size(using.mb)}. Other models are under Advanced.`;
-  const offer = !cloud() && !models.found && !usual.installed;
-  $("#engine-download").hidden = !offer;
-  $("#engine-download").replaceChildren(...(offer ? [modelRow(usual)] : []));
-}
-
-function drawModels() {
-  const models = state.models;
-  const listed = models.installed.some((m) => m.path === models.in_use);
-
-  $("#models-installed").replaceChildren(
-    ...models.installed.map((m) => {
-      const input = el("input", { type: "radio", name: "model", value: m.path, checked: m.path === models.in_use });
-      input.addEventListener("change", () => save({ ROOKEY_MODEL: m.default ? "" : m.path }));
-      const where = m.shown.slice(0, m.shown.lastIndexOf("/"));
-      return el(
-        "label",
-        { className: "choice" },
-        input,
-        el(
-          "span",
-          { className: "choice-text" },
-          el("span", { className: "choice-name" }, m.name || m.file),
-          el("span", { className: "choice-about" }, `${size(m.mb)}, in ${where}`),
-        ),
-      );
-    }),
-  );
-
-  const missing = $("#models-missing");
-  missing.hidden = models.found;
-  if (!models.found) {
-    missing.replaceChildren("There is no model at ", code(models.in_use), ". Download one below, or point to a file.");
-  }
-
-  const wanted = models.catalog.filter((m) => !m.installed);
-  $("#models-more-title").hidden = wanted.length === 0;
-  $("#models-where").hidden = wanted.length === 0;
-  $("#models-where").textContent = `Downloads go to ${models.dir}.`;
-  $("#models-catalog").replaceChildren(...wanted.map(modelRow));
-  drawDownload();
-
-  fill($("#model"), listed ? "" : state.values.ROOKEY_MODEL);
-}
-
-function modelRow(m) {
-  const download = el("button", { type: "button", className: "button" }, "Download");
-  download.addEventListener("click", async () => {
-    if (await send("/api/model", { download: m.file }, `Starting on ${m.name}`)) {
-      say(`Downloading ${m.name}`);
-      draw();
-    }
-  });
-  const halt = el("button", { type: "button", className: "button", hidden: true }, "Stop");
-  halt.addEventListener("click", async () => {
-    await send("/api/model", { cancel: true }, "Stopping the download");
-    say(`Stopped. Nothing of ${m.name} is kept.`);
-    watch();
-  });
-  const row = el(
-    "li",
-    { className: "row model-row" },
-    el(
-      "span",
-      { className: "row-text" },
-      el("span", { className: "choice-name" }, m.name, el("span", { className: "choice-meta" }, `, ${size(m.mb)}`)),
-      el("span", { className: "choice-about" }, m.about),
-    ),
-    el("span", { className: "actions" }, download, halt),
-    el(
-      "div",
-      { className: "row-wide", hidden: true },
-      el(
-        "div",
-        { className: "progress", role: "progressbar", ariaLabel: `Downloading ${m.name}`, ariaValueMin: "0", ariaValueMax: "100" },
-        el("div", { className: "progress-done" }),
-      ),
-      el("p", { className: "progress-text" }),
-    ),
-    el("p", { className: "problem row-wide", hidden: true }),
-  );
-  row.dataset.file = m.file;
-  return row;
-}
-
-/** The part of the models that moves by itself. */
-function drawDownload() {
-  const download = state.models.download;
-  for (const row of $$(".model-row")) {
-    const mine = download && download.file === row.dataset.file;
-    const running = Boolean(mine && download.running);
-    const [start, halt] = row.querySelectorAll("button");
-    const [bar, problem] = row.querySelectorAll(".row-wide");
-    start.hidden = running;
-    start.disabled = Boolean(download && download.running && !mine);
-    start.textContent = mine && download.error ? "Try again" : "Download";
-    halt.hidden = !running;
-    bar.hidden = !running;
-    problem.hidden = !(mine && download.error);
-    if (mine && download.error) problem.textContent = `The download didn't finish. ${download.error}`;
-    if (running) {
-      const part = download.total ? download.done / download.total : 0;
-      row.querySelector(".progress-done").style.width = `${(part * 100).toFixed(1)}%`;
-      row.querySelector(".progress").ariaValueNow = String(Math.round(part * 100));
-      const mb = (bytes) => Math.round(bytes / 1048576);
-      row.querySelector(".progress-text").textContent = download.total
-        ? `${mb(download.done)} of ${mb(download.total)} MB`
-        : "Connecting";
-    }
-  }
-}
-
-function drawLanguage() {
-  const picked = languages();
-  const known = LANGUAGES.map(([id]) => id);
-  const extra = picked.filter((l) => !known.includes(l));
-  $("#languages").replaceChildren(
-    ...[...LANGUAGES, ...extra.map((l) => [l, l])].map(([id, name]) => {
-      const input = el("input", { type: "checkbox", value: id, checked: picked.includes(id) });
-      input.addEventListener("change", () => {
-        const now = input.checked ? [...picked, id] : picked.filter((l) => l !== id);
-        save({ ROOKEY_LANG: now.join(",") });
-      });
-      return el("label", { className: "chip" }, input, el("span", {}, name));
-    }),
-    (() => {
-      const input = el("input", { type: "checkbox", checked: view.otherLanguage });
-      input.addEventListener("change", () => {
-        view.otherLanguage = input.checked;
-        drawLanguage();
-        if (input.checked) $("#language-code").focus();
-      });
-      return el("label", { className: "chip" }, input, el("span", {}, "Another…"));
-    })(),
-  );
-  $("#language-other").hidden = !view.otherLanguage;
-  const names = picked.map((l) => LANGUAGE_NAMES[l] || l);
-  $("#language-about").textContent =
-    picked.length === 0
-      ? "Listening for any language."
-      : picked.length === 1
-        ? `Always ${names[0]}.`
-        : `Listening for ${names.slice(0, -1).join(", ")} and ${names.at(-1)}.` +
-          (cloud() ? " ElevenLabs tells languages apart on its own, among all of them." : "");
-}
-
-function drawCleanup() {
-  $("#sanitize").checked = isOn(state.values.ROOKEY_SANITIZE);
-  $("#sanitize-about").replaceChildren(
-    ...(cloud()
-      ? ["Takes out ", code("um"), ", ", code("uh"), ", ", code("you know"), ", false starts and noises, and fixes the punctuation."]
-      : ["Whisper already skips most of those. On this machine the switch only mutes noises like ", code("[music]"), "."]),
-  );
-  fill($("#edit"), state.values.ROOKEY_EDIT);
-  $("#edit").disabled = !cloud();
-  $("#edit-field").classList.toggle("is-off", !cloud());
-  $("#edit-hint").textContent = cloud()
-    ? "ElevenLabs rewrites the finished text by this, and bills it extra. Leave it empty for no rewrite."
-    : "Only ElevenLabs can rewrite. Whisper on this machine types what it hears.";
-}
-
-function drawTerms() {
-  const terms = termsMode();
-  $("#terms").checked = terms !== "off";
-  $("#terms-about").textContent =
-    terms === "command"
-      ? "The terms come from your command, set under Advanced."
-      : "Reads your screen as you start, so names like spawn_model_loader come out the way your code spells them." +
-        (reader() === "ocr" ? " Nothing leaves your computer." : "");
-
-  const chosen = READERS[reader()];
-  choose("reader", reader());
-  const about = $("#reader-about");
-  about.replaceChildren(chosen.about);
-  const key = $("#reader-key");
-  key.hidden = true;
-  if (chosen.provider && terms === "screen") needsKey(key, chosen.provider);
-
-  const command = state.values.ROOKEY_CONTEXT;
-  fill($("#command"), terms === "command" ? command : "");
-  $("#command-hint").textContent =
-    "One term per line. Runs through sh each time you start talking, instead of reading the screen. Empty reads the screen.";
-  $("#terms-cost").hidden = !cloud() || terms === "off";
-}
-
-/** "listen" when rookey reads the keys itself, "desktop" when a compositor bind runs it. */
-function hotkeyWay() {
-  if (view.hotkey.way) return view.hotkey.way;
-  if (state.listen.chord) return "listen";
-  return state.hotkey.bound || state.listen.blocked ? "desktop" : "listen";
-}
-
-function drawHotkey() {
-  const hotkey = state.hotkey;
-  const listen = state.listen;
-  const mine = view.hotkey;
-  const listening = hotkeyWay() === "listen";
-
-  choose("hotkey-way", listening ? "listen" : "desktop");
-  $('input[name="hotkey-way"][value="listen"]').disabled = Boolean(listen.blocked) && !listen.chord;
-  $("#listen-blocked").hidden = !(listening && listen.blocked);
-  $("#listen-blocked").textContent = listen.blocked || "";
-  $("#sounds").checked = !isOn(state.values.ROOKEY_QUIET);
-  $("#notifications").checked = !isOn(state.values.ROOKEY_NO_NOTIFICATIONS);
-
-  const writable = listening ? !listen.blocked : hotkey.writable;
-  const set = listening ? (listen.chord ? { chord: listen.chord } : null) : hotkey.bound;
-  const editing = writable && (mine.editing || !set);
-
-  $("#hotkey-manual").hidden = listening || hotkey.writable;
-  $("#hotkey-bound").hidden = !writable || editing;
-  $("#hotkey-form").hidden = !editing;
-  $("#hotkey-problem").hidden = !mine.problem;
-  $("#hotkey-problem").textContent = mine.problem;
-
-  if (!listening && !hotkey.writable) {
-    $("#hotkey-blocked").textContent =
-      hotkey.blocked ||
-      (hotkey.desktop === "macos"
-        ? "macOS keeps hotkeys in whichever app you bind them with, so this one is yours to add."
-        : "rookey can set the hotkey itself on niri and Hyprland. On this desktop, bind the command in its own settings.");
-    const desktop = MANUAL[view.desktop] || MANUAL[hotkey.desktop] || MANUAL.niri;
-    choose("desktop", Object.keys(MANUAL).find((id) => MANUAL[id] === desktop));
-    $("#snippet").textContent = desktop.snippet;
-    $("#snippet-hint").textContent = `${desktop.hint} Typing the text needs wtype on Linux.`;
-    return;
-  }
-  if (!writable) return;
-
-  if (set) {
-    $("#hotkey-summary").replaceChildren(
-      ...(listening
-        ? listen.running
-          ? [
-              "Hold ",
-              code(set.chord),
-              " to talk.",
-              listen.swallowed
-                ? ` ${hotkey.desktop === "niri" ? "niri" : "Hyprland"} keeps these keys from your windows.`
-                : " These keys reach the window you are in as well.",
-            ]
-          : [code(set.chord), " is set, but rookey isn't listening. Set the keys again to start it."]
-        : [code(set.chord), " starts and stops a recording. Set in ", code(set.file), "."]),
-    );
-    $("#hotkey-unbind").textContent = listening ? "Stop listening" : "Unbind";
-  }
-  if (!editing) return;
-
-  const name = hotkey.desktop === "niri" ? "niri" : "Hyprland";
-  fill($("#chord"), mine.chord ?? set?.chord ?? (listening ? "Control_R" : "Super+Shift+D"));
-  $("#chord").classList.toggle("is-listening", mine.pressing);
-  $("#chord-press").textContent = mine.pressing ? "Stop listening" : "Press keys";
-  $("#chord-hint").textContent = mine.pressing
-    ? listening
-      ? "Press the keys now, rookey reads them from the keyboard. A key on its own, like the right Ctrl, counts as you let it go. Esc leaves it as it is."
-      : "Press the combination now. Esc leaves it as it is."
-    : listening
-      ? hotkey.writable
-        ? `A spare key like the right Ctrl, or a combination with Super. ${hotkey.desktop === "niri" ? "niri" : "Hyprland"} gets a bind that does nothing, so the keys don't type into your windows.`
-        : "The keys reach the window you are in as well, so pick ones it has no use for: a spare key like the right Ctrl, or a combination with Super."
-      : `Keys ${name} already uses never reach this page. Those you can type in, the way ${name} writes them.`;
-  $("#hotkey-cancel").hidden = !set;
-  $("#hotkey-actions").hidden = Boolean(mine.taken);
-  $("#hotkey-other-file").hidden = listening;
-  $("#hotkey-bind").textContent = listening ? "Use these keys" : "Bind";
-  $("#hotkey-where").replaceChildren(
-    ...(listening
-      ? ["Runs ", code("rookey listen"), " as a service of your user, started with your desktop."]
-      : [
-          "Goes into ",
-          code(mine.file || hotkey.file),
-          hotkey.runs ? ", and runs " : "",
-          hotkey.runs ? code(hotkey.runs) : "",
-          `. ${name} checks the change first, and a change it won't take is undone.`,
-        ]),
-  );
-
-  $("#hotkey-files").hidden = listening || !mine.files;
-  $("#hotkey-file-list").replaceChildren(
-    ...(hotkey.files || []).map((file) => {
-      const input = el("input", { type: "radio", name: "hotkey-file", value: file, checked: file === (mine.file || hotkey.file) });
-      input.addEventListener("change", () => {
-        mine.file = file;
-        drawHotkey();
-      });
-      return el("label", { className: "choice" }, input, el("span", { className: "choice-name" }, file));
-    }),
-  );
-
-  $("#hotkey-taken").hidden = !mine.taken;
-  if (mine.taken) {
-    const { chord, file, line, text } = mine.taken;
-    const outcome = listening
-      ? "rookey would start as well, both on one press."
-      : hotkey.desktop === "niri"
-        ? "Bound here, it stops doing that."
-        : "Bound here as well, both would run on one press.";
-    $("#hotkey-taken-text").replaceChildren(code(chord), " already does something, in ", code(file), ` on line ${line}. ${outcome}`);
-    $("#hotkey-taken-line").textContent = text;
-  }
-}
-
-function drawProviders() {
-  $("#provider-list").replaceChildren(...state.providers.map((p) => providerRow(p, "keys")));
-  $("#files").replaceChildren(
-    "Settings are in ",
-    code(state.path),
-    ". Keys are in ",
-    code(state.keys_path),
-    ", which only your user can read, and apart from the settings on purpose: what is in ~/.config tends to get synced and published with dotfiles. Environment variables win over both.",
-  );
-}
-
-/** A provider's key, with what can be done with it. The same row shows under Engine and Keys. */
-function providerRow(p, where) {
-  const here = view.provider?.id === p.id && view.provider.where === where;
-  const doing = here ? view.provider.doing : null;
-  const status = p.saved
-    ? el("span", { className: "choice-about" }, "Saved: ", code(p.hint || "a short key"))
-    : el("span", { className: "choice-about" }, where === "engine" ? "No key yet." : `No key. ${p.does}`);
-  const shell = p.env
-    ? el("span", { className: "choice-about" }, `Your shell sets ${p.var} too, and it wins while it is set. A hotkey doesn't see your shell.`)
-    : null;
-
-  const redraw = () => (where === "engine" ? drawEngine() : drawProviders());
-  const button = (text, act, className = "button") => {
-    const b = el("button", { type: "button", className }, text);
-    b.addEventListener("click", act);
-    return b;
+    setTimeout(() => (b.label = "copy"), 2000);
   };
-  const show = (what) => () => {
-    view.provider = what && { id: p.id, where, doing: what };
-    redraw();
+  return html`<button type="button" class="button" @click="${copy}">${() => t(b.label)}</button>`;
+}
+
+const focus = (selector) => nextTick(() => $(selector)?.focus());
+
+// ---- the page ------------------------------------------------------------
+
+function Page() {
+  return html`
+    <div class="stopped" role="alert" hidden="${() => !ui.stopped}">
+      <p>${tx("stopped", { cmd: code("rookey ui") })}</p>
+    </div>
+    <div class="pad">
+    ${Header()}
+    <main class="settings" id="settings" inert="${() => ui.stopped}">
+      ${() => (ui.ready ? Settings() : "")}
+    </main>
+    <aside class="specimen" aria-labelledby="specimen-title">
+      <div class="specimen-inner" id="specimen" inert="${() => ui.stopped}">
+        ${() => (ui.ready ? Specimen() : "")}
+      </div>
+    </aside>
+    </div>`;
+}
+
+function Header() {
+  const theme = (value) => {
+    ui.theme = value;
+    applyLook();
+    if (ui.s) save({ ROOKEY_UI_THEME: value === "system" ? "" : value });
   };
+  // ponytail: a new language reloads the page. Arrow can't swap a whole tree's words in place,
+  // and tearing the tree down leaves it running watchers whose slots are gone.
+  const language = async (value) => {
+    if (ui.s && (await save({ ROOKEY_UI_LANG: value }))) location.reload();
+  };
+  return html`
+    <header class="top">
+      <h1><img class="logo" src="/icon.svg" alt="" width="36" height="36"><span>${tx("heading", { mark: html`<span class="mark">rookey</span>` })}</span></h1>
+      <p class="${() => (ui.status.problem ? "status is-problem" : "status")}" role="status">${() => t(ui.status.key, ui.status.vars)}</p>
+      <div class="prefs">
+        <label class="pref">
+          <span>${t("theme")}</span>
+          <select @change="${(e) => theme(e.target.value)}">
+            ${["system", "light", "dark"].map((id) => html`<option value="${id}" selected="${() => ui.theme === id}">${t(`theme.${id}`)}</option>`)}
+          </select>
+        </label>
+        <label class="pref">
+          <span>${t("language")}</span>
+          <select @change="${(e) => language(e.target.value)}">
+            ${Object.entries(LOCALES).map(([id, name]) => html`<option value="${id}" lang="${id}" selected="${() => ui.lang === id}">${name}</option>`)}
+          </select>
+        </label>
+      </div>
+    </header>`;
+}
 
-  const actions = el("span", { className: "actions" });
-  if (!doing && p.saved) actions.append(button("Replace", show("edit")), button("Remove", show("remove")));
-  if (!doing && !p.saved) actions.append(button("Add key", show("edit"), where === "engine" ? "button is-primary" : "button"));
-
-  const row = el(
-    "li",
-    { className: "row" },
-    el("span", { className: "row-text" }, el("span", { className: "choice-name" }, where === "engine" ? `Your ${p.name} key` : p.name), status, shell),
-    actions,
-  );
-
-  if (doing === "edit") {
-    const input = el("input", {
-      className: "typed-input", type: "password", spellcheck: false, autocomplete: "off",
-      ariaLabel: `${p.name} key`, placeholder: "Paste the key",
-    });
-    const form = el(
-      "form",
-      { className: "row-wide" },
-      el("div", { className: "with-button" }, input, el("button", { type: "submit", className: "button is-primary" }, "Save key"), button("Cancel", show(null))),
-      el(
-        "p",
-        { className: "hint" },
-        "Keys are made in your ",
-        el("a", { href: p.site, target: "_blank", rel: "noreferrer noopener" }, `${p.name} account`),
-        ". Once saved, this page never shows it again.",
-      ),
-    );
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!input.value.trim()) return input.focus();
-      if (await send("/api/key", { provider: p.id, key: input.value.trim() })) {
-        view.provider = null;
-        input.value = "";
-        say(`${p.name} key saved to ${state.keys_path}`);
-        draw();
-      }
-    });
-    row.append(form);
-    queueMicrotask(() => input.focus());
-  }
-
-  if (doing === "remove") {
-    const remove = button(
-      "Remove key",
-      async () => {
-        view.provider = null;
-        if (await send("/api/key", { provider: p.id, key: "" })) say(`${p.name} key removed from ${state.keys_path}`);
-        draw();
-      },
-      "button is-danger",
-    );
-    const keep = button("Keep it", show(null));
-    row.append(
-      el(
-        "div",
-        { className: "row-wide" },
-        el("p", { className: "confirm-text" }, "Remove this key? It can't be read back from here."),
-        el("div", { className: "actions" }, remove, keep),
-      ),
-    );
-    queueMicrotask(() => keep.focus());
-  }
-  return row;
+function Settings() {
+  return html`${Checks()}${Engine()}${Languages()}${Cleanup()}${Hotkey()}${Advanced()}`;
 }
 
 /** A setting the shell overrides, noted next to it. */
-function drawShell() {
-  for (const note of $$("[data-env]")) {
-    const name = note.dataset.env;
-    const set = name in state.env;
-    note.hidden = !set;
-    if (set) note.replaceChildren("Your shell sets ", code(`${name}=${state.env[name]}`), ". It wins over this page while it is set.");
+function shell(name) {
+  return html`<p class="note" hidden="${() => !(name in ui.s.env)}">${() =>
+    name in ui.s.env ? tx("shell", { setting: code(`${name}=${ui.s.env[name]}`) }) : ""}</p>`;
+}
+
+// The helpers below are called with values and with functions. Arrow updates only the slots
+// given a function, so every one of theirs gets one.
+const live = (v) => (typeof v === "function" ? v : () => v);
+
+/** A switch row: name, what it does, the checkbox. */
+function toggle(id, name, about, checked, change) {
+  [name, about, checked] = [name, about, checked].map(live);
+  return html`
+    <label class="switch">
+      <span class="switch-text">
+        <span class="choice-name">${name}</span>
+        <span class="choice-about">${about}</span>
+      </span>
+      <input type="checkbox" role="switch" id="${id}" checked="${checked}" @change="${change}">
+    </label>`;
+}
+
+/** A radio choice with a name and a line about it. */
+function choice(name, value, checked, title, about, change, disabled = false) {
+  [checked, title, about, disabled] = [checked, title, about, disabled].map(live);
+  return html`
+    <label class="choice">
+      <input type="radio" name="${name}" value="${value}" checked="${checked}" disabled="${disabled}" @change="${change}">
+      <span class="choice-text">
+        <span class="choice-name">${title}</span>
+        <span class="choice-about">${about}</span>
+      </span>
+    </label>`;
+}
+
+function chip(type, name, value, checked, text, change) {
+  [checked, text] = [checked, text].map(live);
+  return html`<label class="chip"><input type="${type}" name="${name}" value="${value}" checked="${checked}" @change="${change}"><span>${text}</span></label>`;
+}
+
+// ---- setup check -----------------------------------------------------------
+
+/** A check's words: ours by its id where we have them, else what the server sent. */
+function checkWords(c) {
+  const engine = html`<a href="#engine-title">${t("engine.title")}</a>`;
+  if (!has(`check.${c.id}.title`)) return { title: c.title, missing: [c.missing] };
+  let title = t(`check.${c.id}.title`);
+  let missing = tx(`check.${c.id}.missing`, { engine });
+  if (c.id === "mic" && c.title.includes(": ")) title = t("check.mic.named", { name: c.title.split(": ").slice(1).join(": ") });
+  if (c.id === "screen") {
+    const tools = ["grim", ...(reader() === "ocr" ? ["tesseract"] : [])].filter((tool) => !ui.s.tools[tool]);
+    missing = tx("check.screen.missing", { tools: listOf(tools) });
+  }
+  return { title, missing };
+}
+
+function Checks() {
+  const failing = () => ui.s.checks.some((c) => !c.ok);
+  return html`
+    <section class="group" id="setup" aria-labelledby="setup-title" hidden="${() => !failing()}">
+      <h2 id="setup-title">${t("setup.title")}</h2>
+      <p class="about">${t("setup.about")}</p>
+      <ul class="checks">
+        ${() => ui.s.checks.map((c) => {
+          const words = checkWords(c);
+          return html`
+            <li class="${`check ${c.ok ? "is-ok" : "is-missing"}`}">
+              <span class="check-mark" role="img" aria-label="${t(c.ok ? "check.ready" : "check.missing")}"></span>
+              <span class="row-text">
+                <span class="choice-name">${words.title}</span>
+                ${c.ok ? "" : html`<span class="choice-about">${words.missing}</span>`}
+                ${c.fix ? html`<span class="with-button"><code class="fix">${c.fix}</code>${copyButton(() => c.fix)}</span>` : ""}
+              </span>
+            </li>`;
+        })}
+      </ul>
+      <div class="actions">
+        <button type="button" class="button" @click="${checkAgain}">${t("setup.again")}</button>
+      </div>
+    </section>
+    <p class="ready" hidden="${failing}">${t("setup.ready")}</p>`;
+}
+
+async function checkAgain() {
+  say("status.checking");
+  try {
+    ui.s = await call("/api/state");
+    say(ui.s.checks.every((c) => c.ok) ? "status.all-here" : "status.still-missing");
+  } catch (e) {
+    say("status.failed", { why: e.message }, true);
   }
 }
 
-// The example sentence, cut up by what each setting does to it.
-function drawSpecimen() {
-  const clean = cloud() && $("#sanitize").checked;
-  const terms = $("#terms").checked;
+// ---- engine --------------------------------------------------------------
 
-  const specimen = $("#specimen");
-  specimen.classList.toggle("is-clean", clean);
-  specimen.classList.toggle("is-terms", terms);
-
-  const start = clean ? "We" : "Um, so we";
-  const name = terms ? "spawn_model_loader" : "spawn model loader";
-  const middle = clean ? "before the recording starts" : "before the, the recording starts, you know";
-  const typed = $("#typed");
-  const before = typed.textContent;
-  typed.replaceChildren(`${start} need to call `, el(terms ? "mark" : "span", {}, name), ` ${middle}.`);
-  $("#then").hidden = !(cloud() && $("#edit").value.trim());
-
-  if (before && before !== typed.textContent) {
-    const caret = $("#caret");
-    caret.classList.remove("is-fresh");
-    void caret.offsetWidth; // restart the blink
-    caret.classList.add("is-fresh");
-  }
+function Engine() {
+  const pickEngine = (e) => {
+    const streaming = engine() === "elevenlabs-realtime" || !values().ROOKEY_BACKEND;
+    save({ ROOKEY_BACKEND: e.target.value === "local" ? "" : streaming ? "elevenlabs-realtime" : "elevenlabs" });
+  };
+  const using = () => ui.s.models.installed.find((m) => m.path === ui.s.models.in_use);
+  const offer = () => !cloud() && !ui.s.models.found && !ui.s.models.catalog[0].installed;
+  return html`
+    <section class="group" aria-labelledby="engine-title">
+      <h2 id="engine-title">${t("engine.title")}</h2>
+      <p class="about">${t("engine.about")}</p>
+      <div class="choices" role="radiogroup" aria-labelledby="engine-title">
+        ${choice("engine", "local", () => !cloud(), t("engine.local"), t("engine.local.about"), pickEngine)}
+        ${choice("engine", "cloud", cloud, t("engine.cloud"), t("engine.cloud.about"), pickEngine)}
+      </div>
+      ${shell("ROOKEY_BACKEND")}
+      <ul class="rows" hidden="${() => !cloud()}">${() => (cloud() ? ProviderRow(provider("elevenlabs"), "engine") : "")}</ul>
+      <div hidden="${() => !cloud()}">
+        ${toggle("stream", t("engine.stream"), t("engine.stream.about"), () => engine() === "elevenlabs-realtime", (e) =>
+          save({ ROOKEY_BACKEND: e.target.checked ? "elevenlabs-realtime" : "elevenlabs" }))}
+      </div>
+      <p class="hint" hidden="${() => cloud() || !ui.s.models.found || !using()}">${() =>
+        using() ? t("engine.uses", { name: using().name || using().file, size: size(using().mb) }) : ""}</p>
+      <ul class="rows" hidden="${() => !offer()}">${() => (offer() ? ModelRow(ui.s.models.catalog[0]) : "")}</ul>
+    </section>`;
 }
 
-function drawTrial() {
-  const { phase, text, error, waited_ms } = state.trial;
-  const says = $("#trial-state");
-  const button = $("#trial-button");
-  const heard = phase === "done" && text.trim() !== "";
+function Models() {
+  const models = () => ui.s.models;
+  const listed = () => models().installed.some((m) => m.path === models().in_use);
+  const wanted = () => models().catalog.filter((m) => !m.installed);
+  return html`
+    <div class="sub" id="models">
+      <h3 id="models-title">${t("models.title")}</h3>
+      <p class="about">${t("models.about")}</p>
+      <div class="choices" role="radiogroup" aria-labelledby="models-title">
+        ${() => models().installed.map((m) =>
+          choice("model", m.path, m.path === models().in_use, m.name || m.file,
+            t("models.in", { size: size(m.mb), where: m.shown.slice(0, m.shown.lastIndexOf("/")) }),
+            () => save({ ROOKEY_MODEL: m.default ? "" : m.path })))}
+      </div>
+      <p class="problem" hidden="${() => models().found}">${() => tx("models.missing", { path: code(models().in_use) })}</p>
+      ${shell("ROOKEY_MODEL")}
 
-  says.className = "trial-state";
-  says.classList.toggle("is-listening", phase === "listening");
-  says.classList.toggle("is-problem", phase === "failed");
-  says.textContent = {
-    idle: "A short recording, taken through the settings as they are now.",
-    listening: "Listening. Say something, then stop.",
-    working: "Transcribing",
-    done: heard ? "rookey heard" : "Nothing was heard. Is the microphone you talk into the default one?",
+      <h4 id="models-more-title" hidden="${() => wanted().length === 0}">${t("models.more")}</h4>
+      <ul class="rows" aria-labelledby="models-more-title">${() => wanted().map(ModelRow)}</ul>
+      <p class="hint" hidden="${() => wanted().length === 0}">${() => t("models.where", { dir: models().dir })}</p>
+
+      <div class="field">
+        <label for="model">${t("models.own")}</label>
+        <input class="typed-input" id="model" type="text" spellcheck="false" autocomplete="off" placeholder="~/models/ggml-medium.bin"
+          .value="${() => (listed() ? "" : values().ROOKEY_MODEL)}" @change="${(e) => save({ ROOKEY_MODEL: e.target.value })}">
+        <p class="hint">${t("models.own.hint")}</p>
+      </div>
+    </div>`;
+}
+
+function ModelRow(m) {
+  // the part that moves by itself: only these read the download, so the rows stay put
+  const download = () => ui.s.models.download;
+  const mine = () => download()?.file === m.file;
+  const running = () => Boolean(mine() && download().running);
+  const failed = () => Boolean(mine() && download().error);
+  const part = () => (download()?.total ? download().done / download().total : 0);
+  const mb = (bytes) => Math.round(bytes / 1048576);
+  const start = async () => {
+    if (await send("/api/model", { download: m.file }, "download.starting", { name: m.name })) say("download.running", { name: m.name });
+  };
+  const halt = async () => {
+    await send("/api/model", { cancel: true }, "download.stopping");
+    say("download.stopped", { name: m.name });
+  };
+  return html`
+    <li class="row model-row">
+      <span class="row-text">
+        <span class="choice-name">${m.name}<span class="choice-meta">, ${size(m.mb)}</span></span>
+        <span class="choice-about">${has(`model.${m.file}`) ? t(`model.${m.file}`) : m.about}</span>
+      </span>
+      <span class="actions">
+        <button type="button" class="button" hidden="${running}" disabled="${() => Boolean(download()?.running && !mine())}" @click="${start}">${() =>
+          t(failed() ? "download.again" : "download")}</button>
+        <button type="button" class="button" hidden="${() => !running()}" @click="${halt}">${t("download.stop")}</button>
+      </span>
+      <div class="row-wide" hidden="${() => !running()}">
+        <progress class="progress" max="100" aria-label="${t("download.label", { name: m.name })}"
+          value="${() => (part() * 100).toFixed(1)}"></progress>
+        <p class="progress-text">${() =>
+          download()?.total ? t("download.progress", { done: mb(download().done), total: mb(download().total) }) : t("download.connecting")}</p>
+      </div>
+      <p class="problem row-wide" hidden="${() => !failed()}">${() => (failed() ? t("download.failed", { why: download().error }) : "")}</p>
+    </li>`;
+}
+
+// ---- languages -------------------------------------------------------------
+
+function Languages() {
+  const pickLanguage = (id) => (e) => {
+    const picked = languages();
+    save({ ROOKEY_LANG: (e.target.checked ? [...picked, id] : picked.filter((l) => l !== id)).join(",") });
+  };
+  const addCode = (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const typed = e.target.value.trim().toLowerCase();
+    if (!typed) return;
+    e.target.value = "";
+    ui.otherLanguage = false;
+    if (!languages().includes(typed)) save({ ROOKEY_LANG: [...languages(), typed].join(",") });
+  };
+  const about = () => {
+    const picked = languages();
+    if (picked.length === 0) return t("lang.any");
+    const names = picked.map((l) => languageName(l));
+    if (picked.length === 1) return t("lang.one", { name: names[0] });
+    return t("lang.many", { names: listOf(names) }) + (cloud() ? t("lang.cloud") : "");
+  };
+  return html`
+    <section class="group" aria-labelledby="language-title">
+      <h2 id="language-title">${t("lang.title")}</h2>
+      <p class="about">${t("lang.about")}</p>
+      <div class="chips" role="group" aria-labelledby="language-title">
+        ${() => {
+          const picked = languages();
+          const all = [...LANGUAGES, ...picked.filter((l) => !LANGUAGES.includes(l))];
+          return all.map((id) => chip("checkbox", "language", id, picked.includes(id), languageName(id, true), pickLanguage(id)));
+        }}
+        ${chip("checkbox", "language-other", "", () => ui.otherLanguage, t("lang.other"), (e) => {
+          ui.otherLanguage = e.target.checked;
+          if (e.target.checked) focus("#language-code");
+        })}
+      </div>
+      <div class="field" hidden="${() => !ui.otherLanguage}">
+        <label for="language-code">${t("lang.code")}</label>
+        <input class="typed-input is-short" id="language-code" type="text" spellcheck="false" autocomplete="off" maxlength="8" placeholder="pt" @keydown="${addCode}">
+        <p class="hint">${t("lang.code.hint")}</p>
+      </div>
+      <p class="hint">${about}</p>
+      ${shell("ROOKEY_LANG")}
+    </section>`;
+}
+
+// ---- cleanup and screen terms --------------------------------------------
+
+function Cleanup() {
+  const sanitize = () =>
+    cloud()
+      ? tx("sanitize.cloud", { um: code("um"), uh: code("uh"), yk: code("you know") })
+      : tx("sanitize.local", { music: code("[music]") });
+  const terms = () =>
+    termsMode() === "command" ? t("terms.command") : t("terms.screen") + (reader() === "ocr" ? t("terms.local") : "");
+  return html`
+    <section class="group" aria-labelledby="cleanup-title">
+      <h2 id="cleanup-title">${t("cleanup.title")}</h2>
+      ${toggle("sanitize", t("sanitize"), sanitize, () => isOn(values().ROOKEY_SANITIZE), (e) =>
+        save({ ROOKEY_SANITIZE: e.target.checked ? "1" : "" }))}
+      ${shell("ROOKEY_SANITIZE")}
+      ${toggle("terms", t("terms"), terms, () => termsMode() !== "off", (e) => save({ ROOKEY_CONTEXT: e.target.checked ? "1" : "" }))}
+      ${shell("ROOKEY_CONTEXT")}
+    </section>`;
+}
+
+/** "OpenAI needs a key" with the way to the place where keys go. */
+function needsKey(id) {
+  const open = () => {
+    ui.advanced = true;
+    ui.provider = { id, where: "keys", doing: "edit" };
+    focus(`#key-${id}-keys`);
+  };
+  const link = html`<a href="#providers" @click="${open}">${t("reader.add-key")}</a>`;
+  return html`<p class="problem">${tx("reader.needs-key", { name: provider(id).name, link })}</p>`;
+}
+
+function Advanced() {
+  const toggled = (e) => {
+    ui.advanced = e.target.open;
+    remember("rookey-advanced", ui.advanced ? "open" : "");
+  };
+  const editText = () => ui.edit ?? values().ROOKEY_EDIT;
+  return html`
+    <details class="group advanced" id="advanced" open="${() => ui.advanced}" @toggle="${toggled}">
+      <summary>
+        <span class="summary-text">
+          <span class="summary-title">${t("advanced")}</span>
+          <span class="about">${t("advanced.about")}</span>
+        </span>
+      </summary>
+
+      ${Models()}
+
+      <div class="${() => (cloud() ? "sub" : "sub is-off")}" id="edit-field">
+        <h3><label for="edit">${t("edit.title")}</label></h3>
+        <textarea id="edit" rows="3" maxlength="2000" placeholder="${t("edit.placeholder")}" disabled="${() => !cloud()}"
+          .value="${editText}" @input="${(e) => (ui.edit = e.target.value)}"
+          @change="${async (e) => (await save({ ROOKEY_EDIT: e.target.value })) && (ui.edit = null)}"></textarea>
+        <p class="hint">${() => t(cloud() ? "edit.cloud" : "edit.local")}</p>
+        ${shell("ROOKEY_EDIT")}
+      </div>
+
+      <div class="sub" id="reader-field">
+        <h3 id="reader-title">${t("reader.title")}</h3>
+        <div class="chips" role="radiogroup" aria-labelledby="reader-title">
+          ${Object.entries(READERS).map(([id, r]) =>
+            chip("radio", "reader", id, () => reader() === id, r.name(), () => save({ ROOKEY_READER: id === "ocr" ? "" : id })))}
+        </div>
+        <p class="hint">${() => t(`reader.${reader()}.about`)}</p>
+        ${() => {
+          const needs = READERS[reader()].provider;
+          return needs && termsMode() === "screen" && !hasKey(needs) ? needsKey(needs) : "";
+        }}
+        ${shell("ROOKEY_READER")}
+
+        <div class="field">
+          <label for="command">${t("command")}</label>
+          <input class="typed-input" id="command" type="text" spellcheck="false" autocomplete="off" placeholder="cat ~/.config/rookey/glossary.txt"
+            .value="${() => (termsMode() === "command" ? values().ROOKEY_CONTEXT : "")}"
+            @change="${(e) => save({ ROOKEY_CONTEXT: e.target.value.trim() || "1" })}">
+          <p class="hint">${t("command.hint")}</p>
+        </div>
+        <p class="hint" hidden="${() => !cloud() || termsMode() === "off"}">${t("terms.cost")}</p>
+      </div>
+
+      <div class="sub" id="providers">
+        <h3 id="providers-title">${t("keys.title")}</h3>
+        <p class="about">${t("keys.about")}</p>
+        <ul class="rows" aria-labelledby="providers-title">${() => ui.s.providers.map((p) => ProviderRow(p, "keys"))}</ul>
+      </div>
+
+      <div class="sub">
+        <h3>${t("files.title")}</h3>
+        <p class="hint">${() => tx("files", { config: code(ui.s.path), keys: code(ui.s.keys_path) })}</p>
+      </div>
+    </details>`;
+}
+
+/** A provider's key, with what can be done with it. The same row shows under Engine and Keys. */
+function ProviderRow(p, where) {
+  const doing = () => (ui.provider?.id === p.id && ui.provider.where === where ? ui.provider.doing : null);
+  const show = (what) => () => {
+    ui.provider = what && { id: p.id, where, doing: what };
+    if (what === "edit") focus(`#key-${p.id}-${where}`);
+    if (what === "remove") focus(`#keep-${p.id}-${where}`);
+  };
+  const does = has(`provider.${p.id}`) ? t(`provider.${p.id}`) : p.does;
+  const saveKey = async (e) => {
+    e.preventDefault();
+    const input = e.target.querySelector("input");
+    if (!input.value.trim()) return input.focus();
+    if (await send("/api/key", { provider: p.id, key: input.value.trim() })) {
+      ui.provider = null;
+      say("key.s.saved", { name: p.name, path: ui.s.keys_path });
+    }
+  };
+  const remove = async () => {
+    ui.provider = null;
+    if (await send("/api/key", { provider: p.id, key: "" })) say("key.s.removed", { name: p.name, path: ui.s.keys_path });
+  };
+  const account = html`<a href="${p.site}" target="_blank" rel="noreferrer noopener">${t("key.account", { name: p.name })}</a>`;
+  return html`
+    <li class="row">
+      <span class="row-text">
+        <span class="choice-name">${where === "engine" ? t("key.yours", { name: p.name }) : p.name}</span>
+        <span class="choice-about">${p.saved
+          ? tx("key.saved", { hint: code(p.hint || t("key.short")) })
+          : where === "engine" ? t("key.none") : t("key.none.does", { does })}</span>
+        ${p.env ? html`<span class="choice-about">${t("key.shell", { var: p.var })}</span>` : ""}
+      </span>
+      <span class="actions">${() =>
+        doing()
+          ? ""
+          : p.saved
+            ? html`<button type="button" class="button" @click="${show("edit")}">${t("key.replace")}</button><button type="button" class="button" @click="${show("remove")}">${t("key.remove")}</button>`
+            : html`<button type="button" class="${where === "engine" ? "button is-primary" : "button"}" @click="${show("edit")}">${t("key.add")}</button>`}</span>
+      ${() =>
+        doing() === "edit"
+          ? html`
+            <form class="row-wide" @submit="${saveKey}">
+              <div class="with-button">
+                <input class="typed-input" id="${`key-${p.id}-${where}`}" type="password" spellcheck="false" autocomplete="off"
+                  aria-label="${t("key.label", { name: p.name })}" placeholder="${t("key.paste")}">
+                <button type="submit" class="button is-primary">${t("key.save")}</button>
+                <button type="button" class="button" @click="${show(null)}">${t("key.cancel")}</button>
+              </div>
+              <p class="hint">${tx("key.where", { link: account })}</p>
+            </form>`
+          : doing() === "remove"
+            ? html`
+              <div class="row-wide">
+                <p class="confirm-text">${t("key.confirm")}</p>
+                <div class="actions">
+                  <button type="button" class="button is-danger" @click="${remove}">${t("key.remove.yes")}</button>
+                  <button type="button" class="button" id="${`keep-${p.id}-${where}`}" @click="${show(null)}">${t("key.remove.no")}</button>
+                </div>
+              </div>`
+            : ""}
+    </li>`;
+}
+
+// ---- hotkey --------------------------------------------------------------
+
+/** "listen" when rookey reads the keys itself, "desktop" when a compositor bind runs it. */
+function hotkeyWay() {
+  if (ui.hotkey.way) return ui.hotkey.way;
+  if (ui.s.listen.chord) return "listen";
+  return ui.s.hotkey.bound || ui.s.listen.blocked ? "desktop" : "listen";
+}
+
+const desktopName = () => (ui.s.hotkey.desktop === "niri" ? "niri" : "Hyprland");
+
+/** Changes what the hotkey part of the page shows. A change clears what was taken or failed. */
+function redraw(changes) {
+  Object.assign(ui.hotkey, { taken: null, problem: "" }, changes);
+}
+
+function Hotkey() {
+  const mine = ui.hotkey;
+  const listening = () => hotkeyWay() === "listen";
+  const writable = () => (listening() ? !ui.s.listen.blocked : ui.s.hotkey.writable);
+  const set = () => (listening() ? (ui.s.listen.chord ? { chord: ui.s.listen.chord } : null) : ui.s.hotkey.bound);
+  const editing = () => writable() && (mine.editing || !set());
+  const manual = () => !listening() && !ui.s.hotkey.writable;
+
+  const pickWay = async (e) => {
+    const way = e.target.value;
+    Object.assign(mine, { way, editing: false, chord: null, files: false, pressing: false });
+    // both at once would start and stop a recording on one press
+    if (way === "desktop" && ui.s.listen.chord) {
+      if (await send("/api/hotkey", { unlisten: true }, "hotkey.s.stopping")) say("hotkey.s.use-toggle");
+    }
+    redraw({});
+  };
+  const unbind = async () => {
+    if (listening()) {
+      const was = ui.s.listen.chord;
+      if (await send("/api/hotkey", { unlisten: true }, "hotkey.s.stopping")) say("hotkey.s.unlistened", { chord: was });
+      return redraw({ way: "listen", editing: false, chord: null });
+    }
+    const was = ui.s.hotkey.bound;
+    if (await send("/api/hotkey", { unbind: true }, "hotkey.s.unbinding")) say("hotkey.s.unbound", was);
+    redraw({ editing: false, chord: null });
+  };
+
+  const summary = () => {
+    const chord = code(set().chord);
+    if (!listening()) return tx("hotkey.bound", { chord, file: code(set().file) });
+    if (!ui.s.listen.running) return tx("hotkey.not-running", { chord });
+    const more = ui.s.listen.swallowed ? t("hotkey.swallowed", { desktop: desktopName() }) : t("hotkey.passes");
+    return [...tx("hotkey.hold", { chord }), more];
+  };
+
+  return html`
+    <section class="group" aria-labelledby="hotkey-title">
+      <h2 id="hotkey-title">${t("hotkey.title")}</h2>
+      <p class="about">${t("hotkey.about")}</p>
+
+      <div class="choices" role="radiogroup" aria-labelledby="hotkey-title">
+        ${choice("hotkey-way", "listen", listening, t("hotkey.listen"), t("hotkey.listen.about"), pickWay,
+          () => Boolean(ui.s.listen.blocked) && !ui.s.listen.chord)}
+        ${choice("hotkey-way", "desktop", () => !listening(), t("hotkey.desktop"),
+          tx("hotkey.desktop.about", { cmd: code("rookey toggle") }), pickWay)}
+      </div>
+      <p class="problem" hidden="${() => !(listening() && ui.s.listen.blocked)}">${() => ui.s.listen.blocked || ""}</p>
+
+      <div hidden="${() => !writable() || editing()}">
+        <p class="key-line">${() => (set() && !editing() ? summary() : "")}</p>
+        <div class="actions">
+          <button type="button" class="button" @click="${() => (redraw({ editing: true }), focus("#chord"))}">${t("hotkey.change")}</button>
+          <button type="button" class="button" @click="${unbind}">${() => t(listening() ? "hotkey.unlisten" : "hotkey.unbind")}</button>
+        </div>
+      </div>
+
+      ${() => (editing() ? HotkeyForm(listening(), set()) : "")}
+      <p class="problem" role="alert" hidden="${() => !mine.problem}">${() => mine.problem}</p>
+
+      ${() => (manual() ? ManualHotkey() : "")}
+
+      ${toggle("sounds", t("sounds"), t("sounds.about"), () => !isOn(values().ROOKEY_QUIET), (e) =>
+        save({ ROOKEY_QUIET: e.target.checked ? "" : "1" }))}
+      ${toggle("notifications", t("notifications"), t("notifications.about"), () => !isOn(values().ROOKEY_NO_NOTIFICATIONS), (e) =>
+        save({ ROOKEY_NO_NOTIFICATIONS: e.target.checked ? "" : "1" }))}
+    </section>`;
+}
+
+function HotkeyForm(listening, set) {
+  const mine = ui.hotkey;
+  const hotkey = ui.s.hotkey;
+  const name = desktopName();
+
+  const bind = async (replace) => {
+    const chord = $("#chord").value.trim();
+    if (!chord) return $("#chord").focus();
+    const asked = listening ? { chord, listen: true, replace } : { chord, file: mine.file, replace };
+    const reply = await send("/api/hotkey", asked, listening ? "hotkey.s.listening" : "hotkey.s.binding", { chord });
+    if (!reply) return redraw({ chord, problem: t(ui.status.key, ui.status.vars) });
+    if (reply.taken) {
+      say("hotkey.s.taken", { chord: reply.taken.chord });
+      return redraw({ chord, taken: reply.taken });
+    }
+    if (listening) say("hotkey.s.listens", { chord: ui.s.listen.chord });
+    else say("hotkey.s.bound", ui.s.hotkey.bound);
+    Object.assign(mine, { way: null, editing: false, chord: null, files: false, pressing: false });
+    redraw({});
+  };
+
+  const press = async () => {
+    if (!listening || mine.pressing) return redraw({ pressing: !mine.pressing });
+    // from the keyboard itself: keys the compositor keeps from the browser come through too
+    redraw({ pressing: true });
+    const reply = await send("/api/hotkey", { capture: true }, "hotkey.s.press");
+    if (!mine.pressing) return;
+    if (!reply) return redraw({ pressing: false, problem: t(ui.status.key, ui.status.vars) });
+    if (!reply.captured) {
+      say("hotkey.s.none");
+      return redraw({ pressing: false });
+    }
+    say("hotkey.s.got", { chord: reply.captured });
+    redraw({ pressing: false, chord: reply.captured });
+    focus("#hotkey-bind");
+  };
+
+  const hint = () =>
+    mine.pressing
+      ? t(listening ? "hotkey.pressing.listen" : "hotkey.pressing.desktop")
+      : listening
+        ? hotkey.writable ? t("hotkey.hint.listen-bound", { desktop: name }) : t("hotkey.hint.listen")
+        : t("hotkey.hint.desktop", { desktop: name });
+
+  const where = () =>
+    listening
+      ? tx("hotkey.where.listen", { cmd: code("rookey listen") })
+      : tx(hotkey.runs ? "hotkey.where.runs" : "hotkey.where", {
+          file: code(mine.file || hotkey.file), runs: hotkey.runs ? code(hotkey.runs) : "", desktop: name,
+        });
+
+  const taken = () => {
+    const { chord, file, line } = mine.taken;
+    const outcome = t(listening ? "hotkey.taken.listen" : hotkey.desktop === "niri" ? "hotkey.taken.niri" : "hotkey.taken.other");
+    return tx("hotkey.taken", { chord: code(chord), file: code(file), line, outcome });
+  };
+
+  return html`
+    <form @submit="${(e) => (e.preventDefault(), bind(false))}">
+      <div class="field">
+        <label for="chord">${t("hotkey.keys")}</label>
+        <div class="with-button">
+          <input class="${() => (mine.pressing ? "typed-input is-listening" : "typed-input")}" id="chord" type="text" spellcheck="false" autocomplete="off"
+            placeholder="Super+Shift+D" .value="${() => mine.chord ?? set?.chord ?? (listening ? "Control_R" : "Super+Shift+D")}"
+            @input="${(e) => (mine.chord = e.target.value)}">
+          <button type="button" class="button" @click="${press}">${() => t(mine.pressing ? "hotkey.pressing" : "hotkey.press")}</button>
+        </div>
+        <p class="hint">${hint}</p>
+      </div>
+
+      <div class="taken" role="alert" hidden="${() => !mine.taken}">
+        <p>${() => (mine.taken ? taken() : "")}</p>
+        <pre><code>${() => mine.taken?.text ?? ""}</code></pre>
+        <div class="actions">
+          <button type="button" class="button is-danger" @click="${() => bind(true)}">${t("hotkey.replace")}</button>
+          <button type="button" class="button" @click="${() => (redraw({}), focus("#chord"))}">${t("hotkey.keep")}</button>
+        </div>
+      </div>
+
+      <div class="actions" hidden="${() => Boolean(mine.taken)}">
+        <button type="submit" class="button is-primary" id="hotkey-bind">${t(listening ? "hotkey.use" : "hotkey.bind")}</button>
+        ${set ? html`<button type="button" class="button" @click="${() => redraw({ editing: false, chord: null, files: false, pressing: false })}">${t("hotkey.cancel")}</button>` : ""}
+        ${listening ? "" : html`<button type="button" class="button is-quiet" @click="${() => redraw({ files: !mine.files })}">${t("hotkey.other-file")}</button>`}
+      </div>
+      <p class="hint">${where}</p>
+
+      <div class="sub" hidden="${() => listening || !mine.files}">
+        <h3 id="hotkey-files-title">${t("hotkey.files")}</h3>
+        <div class="choices is-compact" role="radiogroup" aria-labelledby="hotkey-files-title">
+          ${(hotkey.files || []).map((file) => html`
+            <label class="choice">
+              <input type="radio" name="hotkey-file" value="${file}" checked="${() => file === (mine.file || hotkey.file)}" @change="${() => (mine.file = file)}">
+              <span class="choice-name">${file}</span>
+            </label>`)}
+        </div>
+      </div>
+    </form>`;
+}
+
+function ManualHotkey() {
+  const hotkey = ui.s.hotkey;
+  const id = () => (MANUAL[ui.desktop] ? ui.desktop : MANUAL[hotkey.desktop] ? hotkey.desktop : "niri");
+  const blocked = hotkey.blocked || t(hotkey.desktop === "macos" ? "hotkey.manual.macos" : "hotkey.manual.other");
+  return html`
+    <div>
+      <p class="hint">${blocked}</p>
+      <div class="chips" id="desktops" role="radiogroup" aria-labelledby="hotkey-title">
+        ${Object.entries(MANUAL).map(([key, d]) => chip("radio", "desktop", key, () => id() === key, d.name, () => (ui.desktop = key)))}
+      </div>
+      <div class="snippet">
+        <pre><code>${() => MANUAL[id()].snippet}</code></pre>
+        ${copyButton(() => MANUAL[id()].snippet)}
+      </div>
+      <p class="hint">${() => t("hotkey.manual.wtype", { hint: t(`manual.${id()}`) })}</p>
+    </div>`;
+}
+
+// ---- the example sentence and the voice test -----------------------------
+
+function Specimen() {
+  const clean = () => cloud() && isOn(values().ROOKEY_SANITIZE);
+  const terms = () => termsMode() !== "off";
+  const cut = (key) => html`<span class="cut">${t(key)}</span>`;
+  const typed = () => {
+    const name = terms() ? html`<mark>spawn_model_loader</mark>` : html`<span>spawn model loader</span>`;
+    return tx(clean() ? "typed.clean" : "typed.raw", { name });
+  };
+  // a new caret, keyed by the line, each time the typed line changes: its blink starts afresh
+  let first = true;
+  const caret = () => {
+    const line = `${clean()}${terms()}`;
+    const fresh = !first;
+    first = false;
+    return [html`<span class="${fresh ? "caret is-fresh" : "caret"}" aria-hidden="true"></span>`.key(line)];
+  };
+  return html`
+    <div class="${() => ["specimen-body", clean() && "is-clean", terms() && "is-terms"].filter(Boolean).join(" ")}">
+      <h2 class="visually-hidden" id="specimen-title">${t("specimen.title")}</h2>
+
+      <p class="label">${t("specimen.say")}</p>
+      <p class="said">${cut("said.um")}${t("said.a")}<span class="term">spawn model loader</span>${t("said.b")}${cut("said.the")}${t("said.c")}${cut("said.yk")}${t("said.end")}</p>
+
+      <p class="label">${t("specimen.types")}</p>
+      <p class="typed"><span>${typed}</span>${caret}</p>
+      <p class="then" hidden="${() => !(cloud() && (ui.edit ?? values().ROOKEY_EDIT).trim())}">${t("specimen.then")}</p>
+
+      <p class="caption">${t("specimen.caption")}</p>
+      ${Trial()}
+    </div>`;
+}
+
+function Trial() {
+  const trial = () => ui.s.trial;
+  const heard = () => trial().phase === "done" && trial().text.trim() !== "";
+  const words = () => {
+    const { phase, error } = trial();
+    if (phase === "done") return t(heard() ? "trial.heard" : "trial.silent");
     // the first line is the fault, the rest is advice for a terminal
-    failed: `The test didn't work. ${error.split("\n")[0]}`,
-  }[phase];
-
-  $("#trial-text").hidden = !heard;
-  $("#trial-text").textContent = text;
-  $("#trial-note").hidden = !heard;
-  $("#trial-note").textContent = `Ready ${(waited_ms / 1000).toFixed(1)} s after you stopped.`;
-
-  button.textContent = { listening: "Stop", working: "Stop", done: "Record another" }[phase] || "Record a test";
-  button.disabled = phase === "working";
-  button.classList.toggle("is-danger", phase === "listening");
-  button.classList.toggle("is-primary", phase !== "listening");
+    if (phase === "failed") return t("trial.failed", { why: error.split("\n")[0] });
+    return t(`trial.${phase}`);
+  };
+  const click = async () => {
+    const running = trial().phase === "listening";
+    const reply = await send("/api/try", running ? { stop: true } : { start: true }, running ? "trial.working" : "trial.s.listening");
+    if (reply) say(running ? "trial.s.transcribing" : "trial.s.recording");
+  };
+  return html`
+    <section class="trial" aria-labelledby="trial-title">
+      <h2 class="label" id="trial-title">${t("trial.title")}</h2>
+      <p class="${() => ({ listening: "trial-state is-listening", failed: "trial-state is-problem" })[trial().phase] || "trial-state"}" role="status">${words}</p>
+      <p class="typed" hidden="${() => !heard()}">${() => trial().text}</p>
+      <p class="hint" hidden="${() => !heard()}">${() => t("trial.ready", { s: number(trial().waited_ms / 1000, 1) })}</p>
+      <div class="actions">
+        <button type="button" class="${() => (trial().phase === "listening" ? "button is-danger" : "button is-primary")}"
+          disabled="${() => trial().phase === "working"}" @click="${click}">${() =>
+          t({ listening: "trial.stop", working: "trial.stop", done: "trial.another" }[trial().phase] || "trial.record")}</button>
+      </div>
+    </section>`;
 }
+
+// ---- moving parts ----------------------------------------------------------
 
 // While a download or a test runs, ask how it is going.
 let watching = false;
-const moving = () => Boolean(state.models.download?.running) || ["listening", "working"].includes(state.trial.phase);
+const moving = () => Boolean(ui.s.models.download?.running) || ["listening", "working"].includes(ui.s.trial.phase);
 
 async function watch() {
-  if (watching || stopped || !moving()) return;
+  if (watching || ui.stopped || !moving()) return;
   watching = true;
-  while (moving() && !stopped) {
+  while (moving() && !ui.stopped) {
     await new Promise((done) => setTimeout(done, 400));
     let progress;
     try {
@@ -744,19 +904,16 @@ async function watch() {
     } catch {
       break;
     }
-    const wasDownloading = state.models.download?.running;
-    const wasTrying = state.trial.phase;
-    state.models.download = progress.download;
-    state.trial = progress.trial;
-    drawDownload();
-    drawTrial();
-    if (wasTrying !== progress.trial.phase && progress.trial.phase === "done") say("The test is done. Nothing of it was typed or kept.");
-    if (wasTrying !== progress.trial.phase && progress.trial.phase === "failed") say("The test didn't work.", true);
+    const wasDownloading = ui.s.models.download?.running;
+    const wasTrying = ui.s.trial.phase;
+    ui.s.models.download = progress.download;
+    ui.s.trial = progress.trial;
+    if (wasTrying !== progress.trial.phase && progress.trial.phase === "done") say("trial.s.done");
+    if (wasTrying !== progress.trial.phase && progress.trial.phase === "failed") say("trial.s.failed", {}, true);
     if (wasDownloading && !progress.download) {
       // it landed: the list of models on disk has changed
-      state = await call("/api/state").catch(() => state);
-      say(state.models.found ? "The model is downloaded and in use." : "The model is downloaded. Pick it under Advanced, Local model.");
-      draw();
+      ui.s = await call("/api/state").catch(() => ui.s);
+      say(ui.s.models.found ? "download.in-use" : "download.pick");
     }
   }
   watching = false;
@@ -772,219 +929,45 @@ function chordOf(e) {
   return [...mods.filter(Boolean), key].join("+");
 }
 
-function listen() {
-  $("#readers").append(...Object.entries(READERS).map(([id, r]) => chip("reader", id, r.name)));
-  $("#desktops").append(...Object.entries(MANUAL).map(([id, d]) => chip("desktop", id, d.name)));
-
-  // engine
-  for (const input of $$('input[name="engine"]')) {
-    input.addEventListener("change", () => {
-      const streaming = $("#stream").checked || !state.values.ROOKEY_BACKEND;
-      save({ ROOKEY_BACKEND: input.value === "local" ? "" : streaming ? "elevenlabs-realtime" : "elevenlabs" });
-    });
-  }
-  $("#stream").addEventListener("change", (e) => {
-    save({ ROOKEY_BACKEND: e.target.checked ? "elevenlabs-realtime" : "elevenlabs" });
-  });
-  $("#model").addEventListener("change", (e) => save({ ROOKEY_MODEL: e.target.value }));
-  $("#checks-again").addEventListener("click", async () => {
-    say("Checking");
-    try {
-      state = await call("/api/state");
-      draw();
-      say(state.checks.every((c) => c.ok) ? "Everything it needs is here." : "Some things are still missing.");
-    } catch (e) {
-      say(e.message, true);
-    }
-  });
-
-  // languages
-  $("#language-code").addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
+// on the way down, before the page or the browser acts on the keys
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (!ui.hotkey.pressing) return;
+    // rookey reads them from the keyboard, the page only keeps them from acting here
+    if (hotkeyWay() === "listen") return e.preventDefault();
+    if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
     e.preventDefault();
-    const code = e.target.value.trim().toLowerCase();
-    if (!code) return;
-    e.target.value = "";
-    view.otherLanguage = false;
-    const picked = languages();
-    if (!picked.includes(code)) save({ ROOKEY_LANG: [...picked, code].join(",") });
-    else drawLanguage();
-  });
-
-  // cleanup
-  $("#sanitize").addEventListener("change", (e) => {
-    drawSpecimen();
-    save({ ROOKEY_SANITIZE: e.target.checked ? "1" : "" });
-  });
-  $("#edit").addEventListener("input", drawSpecimen);
-  $("#edit").addEventListener("change", (e) => save({ ROOKEY_EDIT: e.target.value }));
-
-  // screen terms
-  $("#terms").addEventListener("change", (e) => {
-    drawSpecimen();
-    save({ ROOKEY_CONTEXT: e.target.checked ? "1" : "" });
-  });
-  $("#readers").addEventListener("change", (e) => save({ ROOKEY_READER: e.target.value === "ocr" ? "" : e.target.value }));
-  $("#command").addEventListener("change", (e) => {
-    const command = e.target.value.trim();
-    // an emptied command goes back to reading the screen
-    save({ ROOKEY_CONTEXT: command || "1" });
-  });
-
-  // Advanced stays open or closed the way it was left, in this browser
-  try {
-    $("#advanced").open = localStorage.getItem("rookey-advanced") === "open";
-  } catch {
-    // storage is off: it starts closed
-  }
-  $("#advanced").addEventListener("toggle", () => {
-    try {
-      localStorage.setItem("rookey-advanced", $("#advanced").open ? "open" : "");
-    } catch {
-      // nothing to remember it in
-    }
-  });
-
-  listenHotkey();
-
-  // the voice test
-  $("#trial-button").addEventListener("click", async () => {
-    const running = state.trial.phase === "listening";
-    const reply = await send("/api/try", running ? { stop: true } : { start: true }, running ? "Transcribing" : "Listening");
-    if (reply) say(running ? "Transcribing the test" : "Recording a test");
-    drawTrial();
-    watch();
-  });
-}
-
-function listenHotkey() {
-  const mine = view.hotkey;
-  const redraw = (changes) => {
-    Object.assign(mine, { taken: null, problem: "" }, changes);
-    drawHotkey();
-  };
-
-  const bind = async (replace) => {
-    const chord = $("#chord").value.trim();
-    if (!chord) return $("#chord").focus();
-    const listening = hotkeyWay() === "listen";
-    const asked = listening ? { chord, listen: true, replace } : { chord, file: mine.file, replace };
-    const reply = await send("/api/hotkey", asked, listening ? `Listening for ${chord}` : `Binding ${chord}`);
-    if (!reply) return redraw({ chord, problem: $("#status").textContent });
-    if (reply.taken) {
-      say(`${reply.taken.chord} is taken. Nothing was changed.`);
-      return redraw({ chord, taken: reply.taken });
-    }
-    say(listening ? `rookey listens for ${state.listen.chord}` : `${state.hotkey.bound.chord} is bound, in ${state.hotkey.bound.file}`);
-    Object.assign(mine, { way: null, editing: false, chord: null, files: false, pressing: false });
-    redraw({});
-  };
-
-  for (const input of $$('input[name="hotkey-way"]')) {
-    input.addEventListener("change", async () => {
-      Object.assign(mine, { way: input.value, editing: false, chord: null, files: false, pressing: false });
-      // both at once would start and stop a recording on one press
-      if (input.value === "desktop" && state.listen.chord) {
-        if (await send("/api/hotkey", { unlisten: true }, "Stopping")) say("rookey stopped listening. Bind rookey toggle instead.");
-      }
-      redraw({});
-    });
-  }
-  $("#sounds").addEventListener("change", (e) => save({ ROOKEY_QUIET: e.target.checked ? "" : "1" }));
-  $("#notifications").addEventListener("change", (e) => save({ ROOKEY_NO_NOTIFICATIONS: e.target.checked ? "" : "1" }));
-
-  $("#hotkey-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    bind(false);
-  });
-  $("#hotkey-replace").addEventListener("click", () => bind(true));
-  $("#hotkey-keep").addEventListener("click", () => {
-    redraw({});
-    $("#chord").focus();
-  });
-  $("#hotkey-change").addEventListener("click", () => {
-    redraw({ editing: true });
-    $("#chord").focus();
-  });
-  $("#hotkey-cancel").addEventListener("click", () => redraw({ editing: false, chord: null, files: false, pressing: false }));
-  $("#hotkey-other-file").addEventListener("click", () => redraw({ files: !mine.files }));
-  $("#hotkey-unbind").addEventListener("click", async () => {
-    if (hotkeyWay() === "listen") {
-      const was = state.listen.chord;
-      if (await send("/api/hotkey", { unlisten: true }, "Stopping")) say(`rookey stopped listening for ${was}`);
-      return redraw({ way: "listen", editing: false, chord: null });
-    }
-    const was = state.hotkey.bound;
-    if (await send("/api/hotkey", { unbind: true }, "Unbinding")) say(`${was.chord} is unbound, ${was.file} is as it was before`);
-    redraw({ editing: false, chord: null });
-  });
-  $("#chord").addEventListener("input", (e) => {
-    mine.chord = e.target.value;
-  });
-
-  $("#chord-press").addEventListener("click", async () => {
-    if (hotkeyWay() !== "listen" || mine.pressing) return redraw({ pressing: !mine.pressing });
-    // from the keyboard itself: keys the compositor keeps from the browser come through too
-    redraw({ pressing: true });
-    const reply = await send("/api/hotkey", { capture: true }, "Press the keys");
-    if (!mine.pressing) return;
-    if (!reply) return redraw({ pressing: false, problem: $("#status").textContent });
-    if (!reply.captured) {
-      say("No keys were pressed. Nothing was changed.");
-      return redraw({ pressing: false });
-    }
-    say(`Got ${reply.captured}`);
-    $("#chord").value = reply.captured;
-    redraw({ pressing: false, chord: reply.captured });
-    $("#hotkey-bind").focus();
-  });
-  // on the way down, before the page or the browser acts on the keys
-  window.addEventListener(
-    "keydown",
-    (e) => {
-      if (!mine.pressing) return;
-      // rookey reads them from the keyboard, the page only keeps them from acting here
-      if (hotkeyWay() === "listen") return e.preventDefault();
-      if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === "Escape") return redraw({ pressing: false });
-      const chord = chordOf(e);
-      if (!chord) return redraw({ pressing: false, problem: "That key goes by a name this page doesn't know. Type it in instead." });
-      $("#chord").value = chord;
-      redraw({ pressing: false, chord });
-      $("#hotkey-bind").focus();
-    },
-    true,
-  );
-  // the line to add by hand
-  $("#desktops").addEventListener("change", (e) => {
-    view.desktop = e.target.value;
-    drawHotkey();
-  });
-  $("#copy").addEventListener("click", async () => {
-    const button = $("#copy");
-    try {
-      await navigator.clipboard.writeText($("#snippet").textContent);
-      button.textContent = "Copied";
-    } catch {
-      button.textContent = "Select it and copy";
-    }
-    setTimeout(() => (button.textContent = "Copy"), 2000);
-  });
-}
+    e.stopPropagation();
+    if (e.key === "Escape") return redraw({ pressing: false });
+    const chord = chordOf(e);
+    if (!chord) return redraw({ pressing: false, problem: t("hotkey.unknown-key") });
+    redraw({ pressing: false, chord });
+    focus("#hotkey-bind");
+  },
+  true,
+);
 
 async function start() {
-  listen();
+  // drawn once, in the language and theme from the config; after that the parts update in place
+  let failed = null;
   try {
-    state = await call("/api/state");
+    ui.s = await call("/api/state");
+    ui.theme = values().ROOKEY_UI_THEME || "system";
+    ui.lang = pickLang(values().ROOKEY_UI_LANG);
+    ui.ready = true;
   } catch (e) {
-    say(e.message, true);
+    failed = e;
+  }
+  applyLook();
+  Page()($("#app"));
+  if (failed) {
+    say("status.failed", { why: failed.message }, true);
     stop();
     return;
   }
-  draw();
-  say(`Changes are saved as you make them, to ${state.path}`);
+  say("status.saved-as-you-go", { path: ui.s.path });
+  watch();
 
   // Held open so `rookey ui` can tell when this page is closed, and the page when rookey ui is.
   const line = new EventSource(`/api/alive?t=${encodeURIComponent(token)}`);

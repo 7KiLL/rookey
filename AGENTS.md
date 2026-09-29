@@ -23,7 +23,7 @@ cargo test --release                                               # CPU
 | `src/models.rs` | Whisper model catalog, finding installed models, downloads |
 | `src/desktop.rs` | Hotkeys: detects niri or Hyprland, edits their config safely, validates with the compositor itself |
 | `src/ui.rs` | The `rookey ui` HTTP server: token, routes, state for the page, input checks, setup checks |
-| `src/ui/` | The page (`index.html`, `app.js`, `app.css`), fonts and icon, baked in with `include_bytes!` |
+| `src/ui/` | The page: `app.js` (arrow.js templates), `i18n.js` (every word, per language), `app.css`, the vendored `arrow.js`, fonts and icon, baked in with `include_bytes!` |
 
 Settings: environment variables win over `<config_dir>/rookey/config` (`KEY=value` lines). API keys live in `<data_dir>/rookey/keys`, mode 0600, never in the config dir: people sync `~/.config` with dotfile managers and publish it.
 
@@ -39,10 +39,13 @@ Settings: environment variables win over `<config_dir>/rookey/config` (`KEY=valu
 
 ## The page
 
-- The design is a steno pad. Tokens are in `app.css` `:root`, with a dark set under `prefers-color-scheme`. Commissioner is used for anything spoken or read, Martian Mono for anything typed. The left column holds settings, the right column a live example sentence, split by a red rule.
+- The design is a steno pad. Tokens are in `app.css` `:root`, with a dark set under `prefers-color-scheme` and again under `[data-theme="dark"]` for the page's own switch (`ROOKEY_UI_THEME`, empty follows the system). Commissioner is used for anything spoken or read, Martian Mono for anything typed. The left column holds settings, the right column a live example sentence, split by a red rule.
 - There's a simple view anyone can set up (setup check, engine, languages, cleanup, hotkey) and an **Advanced** fold for enthusiasts. New knobs go into Advanced unless most people need them.
 - Copy is plain and specific: what happens, what it costs, where things are saved. Errors say what to do next.
-- Check changes in a real browser at 1440x900 and 390x844, in light and in dark.
+- The page is [arrow.js](https://arrow-js.com/llms.txt) 1.0.6, vendored as one file (`npm pack @arrow-js/core`, `bun build dist/index.mjs --minify --format esm`) because the CSP allows only `'self'`. A slot updates only when it is given a function (`${() => ui.s.x}`); a static read inside a template is drawn once. No direct DOM writes: that is also why the download bar is a native `<progress>` (the CSP blocks `style` attributes).
+- Every word the page shows is a key in `i18n.js`, English and Ukrainian (`ROOKEY_UI_LANG`, empty follows the browser). A test fails if a language misses a key. Words the server writes itself (errors, blocked reasons) stay English. Changing the language reloads the page.
+- Page preferences go in the config, not `localStorage`: every `rookey ui` run gets a new port, so a new origin with empty storage.
+- Check changes in a real browser at 1440x900 and 390x844, in light and in dark, in both languages.
 
 ## Style
 
