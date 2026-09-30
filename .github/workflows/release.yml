@@ -73,6 +73,9 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Checksums
+        # `rookey update` installs no archive without its line in here
+        run: cd dist && sha256sum rookey-* > SHA256SUMS
       - name: Release notes
         uses: orhun/git-cliff-action@v4
         with:
