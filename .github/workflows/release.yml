@@ -90,6 +90,7 @@ jobs:
           fetch-depth: 0  # the notes read every commit since the last tag
       - uses: actions/download-artifact@v8
         with:
+          pattern: rookey-*  # the CUDA action uploads its installer log as an artifact too
           path: dist
           merge-multiple: true
       - name: Checksums
