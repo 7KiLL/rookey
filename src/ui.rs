@@ -234,6 +234,7 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
                 "/api/hotkey" => hotkey(&asked),
                 "/api/try" => try_it(&asked).map(|()| json!({ "trial": trial() })),
                 "/api/sound" => play(&asked).map(|()| json!({})),
+                "/api/open" => open_pane(&asked).map(|()| json!({})),
                 "/api/update" if asked["check"] == true || asked["install"] == true => {
                     update::start(asked["install"] == true).map(|()| update::state())
                 }
@@ -425,7 +426,10 @@ fn state() -> Value {
             *HEARD.lock().unwrap(),
             model.is_file(),
             keys.get("ELEVENLABS_API_KEY").is_some_and(|k| !k.is_empty()) || env::var_os("ELEVENLABS_API_KEY").is_some(),
+            &access(),
         ),
+        // the app macOS asks about, when it can be named
+        "app": app(),
         "hotkey": desktop::hotkey(),
         "listen": listening(&get),
         "trial": trial(),
@@ -452,20 +456,152 @@ fn masked(key: &str) -> String {
     format!("{prefix}••••••••{last}")
 }
 
+/// What the system lets the app responsible for rookey do; None where it can't tell or
+/// doesn't ask. Only macOS asks (see mac.rs).
+#[derive(Default)]
+struct Access {
+    mic: Option<bool>,
+    screen: Option<bool>,
+    typing: Option<bool>,
+    automation: Option<bool>,
+}
+
+#[cfg(target_os = "macos")]
+fn access() -> Access {
+    use crate::mac;
+    Access { mic: mac::mic(), screen: Some(mac::screen()), typing: Some(mac::typing()), automation: mac::automation() }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn access() -> Access {
+    Access::default()
+}
+
+/// The settings pane /api/open offers for a failing check, where this system has one.
+fn opens(id: &str, os: &str) -> Option<&'static str> {
+    Some(match id {
+        "mic" => "sound",
+        // Windows' privacy switch hands apps silence rather than an error
+        "mic-silent" if os == "windows" => "mic-privacy",
+        "mic-silent" => "sound",
+        "mic-access" => "mic-privacy",
+        "screen-access" => "screen-privacy",
+        "typing-access" => "accessibility",
+        "automation" => "automation",
+        _ => return None,
+    })
+}
+
+/// What `/api/open` may open, by name: a fixed program and arguments per system. Nothing in
+/// the request reaches the command line but the name picking one of these.
+fn pane(what: &str, os: &str, on_path: &dyn Fn(&str) -> bool) -> Option<(&'static str, &'static [&'static str])> {
+    Some(match (os, what) {
+        // the older pane ids, which System Settings still answers to since Ventura
+        ("macos", "mic-privacy") => ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"]),
+        ("macos", "screen-privacy") => ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"]),
+        ("macos", "accessibility") => ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]),
+        ("macos", "automation") => ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"]),
+        ("macos", "sound") => ("open", &["x-apple.systempreferences:com.apple.Sound-Settings.extension"]),
+        ("windows", "mic-privacy") => ("explorer", &["ms-settings:privacy-microphone"]),
+        ("windows", "sound") => ("explorer", &["ms-settings:sound"]),
+        // ponytail: the usual mixers and GNOME; other desktops get the words and no button
+        ("linux", "sound") => [("pavucontrol", &[][..]), ("pwvucontrol", &[]), ("gnome-control-center", &["sound"])]
+            .into_iter()
+            .find(|(program, _)| on_path(program))?,
+        _ => return None,
+    })
+}
+
+/// Opens the settings pane a check asked for. On macOS it asks for the permission first:
+/// that puts the app in the pane's list, where the switch is.
+fn open_pane(asked: &Value) -> Res<()> {
+    let what = asked["what"].as_str().unwrap_or_default();
+    let (program, args) = pane(what, env::consts::OS, &on_path).ok_or("There is no such settings page here.")?;
+    #[cfg(target_os = "macos")]
+    match what {
+        "screen-privacy" => crate::mac::ask_screen(),
+        "accessibility" => crate::mac::ask_typing(),
+        _ => {}
+    }
+    let quiet = Stdio::null;
+    Command::new(program).args(args).stdin(quiet()).stdout(quiet()).stderr(quiet()).spawn()?;
+    Ok(())
+}
+
+/// The app macOS files permissions under: the first app bundle among rookey's parents, by
+/// `ps -A -o pid=,ppid=,comm=`. None when there is none, over ssh or in tmux.
+// ponytail: tmux's server hangs off launchd, so the terminal behind it goes unnamed and the
+// page says "the app you started rookey ui from"; the way up is responsibility_get_pid_responsible_for_pid.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn responsible_app(table: &str, mut pid: u32) -> Option<String> {
+    let rows: Vec<(u32, u32, &str)> = table
+        .lines()
+        .filter_map(|line| {
+            // the name may have spaces in it, the numbers never do
+            let (pid, rest) = line.trim_start().split_once(char::is_whitespace)?;
+            let (ppid, comm) = rest.trim_start().split_once(char::is_whitespace)?;
+            Some((pid.parse().ok()?, ppid.parse().ok()?, comm.trim()))
+        })
+        .collect();
+    for _ in 0..32 {
+        let &(_, ppid, comm) = rows.iter().find(|r| r.0 == pid)?;
+        // the outermost bundle: a helper inside Visual Studio Code.app is Visual Studio Code
+        if let Some(at) = comm.find(".app/") {
+            let name = comm[..at].rsplit('/').next()?;
+            return (!name.is_empty()).then(|| name.to_string());
+        }
+        if ppid <= 1 {
+            return None;
+        }
+        pid = ppid;
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn app() -> Option<String> {
+    static APP: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    APP.get_or_init(|| {
+        let out = Command::new("ps").args(["-A", "-o", "pid=,ppid=,comm="]).output().ok()?;
+        responsible_app(&String::from_utf8_lossy(&out.stdout), std::process::id())
+    })
+    .clone()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn app() -> Option<String> {
+    None
+}
+
 /// What recording needs and is missing on this machine, for the settings as they are, with
-/// the command that installs it.
-fn checks(get: &dyn Fn(&str) -> String, heard: Option<bool>, model_found: bool, has_key: bool) -> Vec<Value> {
+/// the command that installs it, or the settings pane that turns it on.
+fn checks(get: &dyn Fn(&str) -> String, heard: Option<bool>, model_found: bool, has_key: bool, access: &Access) -> Vec<Value> {
     let mut checks = Vec::new();
     let mut check = |id: &str, ok: bool, title: &str, missing: &str, fix: Option<String>| {
-        checks.push(json!({ "id": id, "ok": ok, "title": title, "missing": missing, "fix": if ok { None } else { fix } }));
+        let open = opens(id, env::consts::OS).filter(|what| pane(what, env::consts::OS, &on_path).is_some());
+        checks.push(json!({
+            "id": id, "ok": ok, "title": title, "missing": missing,
+            "fix": if ok { None } else { fix },
+            "open": if ok { None } else { open },
+        }));
     };
     let (mic, name) = default_mic();
     let title = name.map_or("Microphone".to_string(), |n| format!("Microphone: {n}"));
     check("mic", mic, &title, "No microphone is plugged in, or none is set as the default.", None);
+    let allowed = access.mic != Some(false);
+    if !allowed {
+        check(
+            "mic-access",
+            false,
+            "Microphone access",
+            "macOS keeps the microphone from the app you started rookey ui from. Turn it on under Privacy & Security > Microphone, then check again.",
+            None,
+        );
+    }
     // A wireless headset that is off still has its dongle plugged in: only listening tells.
     // ponytail: a headset with a noise gate sends exact zeros while you're quiet too; the
     // advice says to speak and check again rather than guessing which one it is
-    if mic && heard == Some(false) {
+    if mic && allowed && heard == Some(false) {
         check(
             "mic-silent",
             false,
@@ -483,14 +619,48 @@ fn checks(get: &dyn Fn(&str) -> String, heard: Option<bool>, model_found: bool, 
     }
     if cfg!(target_os = "linux") {
         check("wtype", on_path("wtype"), "Typing into windows", "wtype is missing, so the text can't be typed for you.", install("wtype"));
-        let context = env::var("ROOKEY_CONTEXT").unwrap_or_else(|_| get("ROOKEY_CONTEXT"));
-        if context == "1" || context == "true" {
+    }
+    // macOS pastes through System Events: Accessibility for the keys, Automation for the events
+    if let Some(ok) = access.typing {
+        check(
+            "typing-access",
+            ok,
+            "Typing into windows",
+            "The app you started rookey ui from isn't allowed to type for you. Turn it on under Privacy & Security > Accessibility. The first time rookey types, macOS also asks to let it control System Events: allow that too. The app that runs your hotkey needs both as well.",
+            None,
+        );
+    }
+    if access.automation == Some(false) {
+        check(
+            "automation",
+            false,
+            "Control of System Events",
+            "The app you started rookey ui from was refused control of System Events, which rookey pastes through. Turn it on under Privacy & Security > Automation.",
+            None,
+        );
+    }
+    let context = env::var("ROOKEY_CONTEXT").unwrap_or_else(|_| get("ROOKEY_CONTEXT"));
+    if context == "1" || context == "true" {
+        if let Some(ok) = access.screen {
+            check(
+                "screen-access",
+                ok,
+                "Recording the screen",
+                "The app you started rookey ui from may not record the screen, so screen terms can't read it. Turn it on under Privacy & Security > Screen & System Audio Recording, then quit and reopen that app and run rookey ui again.",
+                None,
+            );
+        }
+        if cfg!(any(target_os = "linux", target_os = "macos")) {
             let reader = env::var("ROOKEY_READER").unwrap_or_else(|_| get("ROOKEY_READER"));
-            let mut tools = vec!["grim"];
+            // macOS has screencapture built in
+            let mut tools = if cfg!(target_os = "macos") { vec![] } else { vec!["grim"] };
             if reader.is_empty() || reader == "ocr" {
                 tools.push("tesseract");
             }
-            let missing: Vec<&str> = tools.into_iter().filter(|t| !on_path(t)).collect();
+            let missing: Vec<&str> = tools.iter().copied().filter(|t| !on_path(t)).collect();
+            if tools.is_empty() {
+                return checks;
+            }
             let fix = missing.iter().map(|t| packages(t)).collect::<Option<Vec<_>>>().map(|p| p.join(" "));
             check(
                 "screen",
@@ -1008,12 +1178,99 @@ mod tests {
     #[test]
     fn silent_mic_is_its_own_check() {
         let none = |_: &str| String::new();
-        let silent = |heard| checks(&none, heard, true, true).iter().any(|c| c["id"] == "mic-silent");
+        let silent = |heard| checks(&none, heard, true, true, &Access::default()).iter().any(|c| c["id"] == "mic-silent");
         // only for a mic that is there: a missing one already says so
-        let there = checks(&none, None, true, true)[0]["ok"] == true;
+        let there = checks(&none, None, true, true, &Access::default())[0]["ok"] == true;
         assert_eq!(silent(Some(false)), there);
         assert!(!silent(Some(true)));
         assert!(!silent(None)); // not listened to yet
+    }
+
+    #[test]
+    fn open_takes_only_its_names() {
+        let all = |_: &str| true;
+        for os in ["macos", "windows", "linux"] {
+            for what in ["", "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera", "sound; rm -rf ~", "ms-settings:", "../sound", "SOUND"] {
+                assert!(pane(what, os, &all).is_none(), "{os} {what}");
+            }
+        }
+        assert!(open_pane(&json!({ "what": "calc.exe" })).is_err());
+        assert!(open_pane(&json!({ "what": ["sound"] })).is_err());
+        assert!(open_pane(&json!({})).is_err());
+        assert_eq!(
+            pane("screen-privacy", "macos", &all),
+            Some(("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"][..]))
+        );
+        assert_eq!(pane("mic-privacy", "windows", &all), Some(("explorer", &["ms-settings:privacy-microphone"][..])));
+        // Linux opens a mixer only when one is installed, the first there is
+        assert_eq!(pane("sound", "linux", &|p| p == "gnome-control-center"), Some(("gnome-control-center", &["sound"][..])));
+        assert_eq!(pane("sound", "linux", &|_| false), None);
+        assert_eq!(pane("mic-privacy", "linux", &all), None);
+    }
+
+    #[test]
+    fn every_failing_check_has_its_fix() {
+        let all = |_: &str| true;
+        // (check, macOS, Windows, Linux with a mixer); the rest are fixed on the page itself
+        let expected = [
+            ("mic", Some("sound"), Some("sound"), Some("sound")),
+            ("mic-silent", Some("sound"), Some("mic-privacy"), Some("sound")),
+            ("mic-access", Some("mic-privacy"), Some("mic-privacy"), None), // a row macOS alone has
+            ("screen-access", Some("screen-privacy"), None, None),
+            ("typing-access", Some("accessibility"), None, None),
+            ("automation", Some("automation"), None, None),
+            ("model", None, None, None),
+            ("key", None, None, None),
+        ];
+        for (id, macos, windows, linux) in expected {
+            for (os, want) in [("macos", macos), ("windows", windows), ("linux", linux)] {
+                let got = opens(id, os).filter(|w| pane(w, os, &all).is_some());
+                assert_eq!(got, want, "{id} on {os}");
+            }
+        }
+    }
+
+    #[test]
+    fn macos_permissions_are_checks() {
+        let screen = |k: &str| if k == "ROOKEY_CONTEXT" { "1".to_string() } else { String::new() };
+        let denied = Access { mic: Some(false), screen: Some(false), typing: Some(false), automation: Some(false) };
+        let ids = |access: &Access, heard| -> Vec<(String, bool)> {
+            checks(&screen, heard, true, true, access).iter().map(|c| (c["id"].as_str().unwrap().to_string(), c["ok"] == true)).collect()
+        };
+        let got = ids(&denied, Some(false));
+        for id in ["mic-access", "typing-access", "automation", "screen-access"] {
+            assert!(got.contains(&(id.to_string(), false)), "{id} in {got:?}");
+        }
+        // silence from a mic macOS keeps closed is that, not a muted mic
+        assert!(!got.iter().any(|c| c.0 == "mic-silent"));
+        let allowed = Access { mic: Some(true), screen: Some(true), typing: Some(true), automation: None };
+        let got = ids(&allowed, Some(true));
+        assert!(got.contains(&("typing-access".to_string(), true)) && got.contains(&("screen-access".to_string(), true)));
+        assert!(!got.iter().any(|c| c.0 == "mic-access" || c.0 == "automation"));
+        // elsewhere nothing is asked, so there are no such rows
+        let got = ids(&Access::default(), None);
+        assert!(!got.iter().any(|c| c.0.ends_with("-access") || c.0 == "automation"));
+    }
+
+    #[test]
+    fn the_app_macos_asks_about() {
+        let table = "    1     0 /sbin/launchd\n\
+                     400     1 /System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal\n\
+                     401   400 login\n\
+                     402   401 -zsh\n\
+                     500   402 /usr/local/bin/rookey\n\
+                     600     1 /Applications/Visual Studio Code.app/Contents/MacOS/Electron\n\
+                     601   600 /Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)\n\
+                     602   601 /bin/zsh\n\
+                     603   602 rookey\n\
+                     700     1 tmux\n\
+                     701   700 -zsh\n\
+                     702   701 rookey\n";
+        assert_eq!(responsible_app(table, 500).as_deref(), Some("Terminal"));
+        assert_eq!(responsible_app(table, 603).as_deref(), Some("Visual Studio Code"));
+        assert_eq!(responsible_app(table, 702), None);
+        assert_eq!(responsible_app(table, 999), None);
+        assert_eq!(responsible_app("garbage\n\n", 1), None);
     }
 
     #[test]

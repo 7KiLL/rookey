@@ -48,6 +48,8 @@ macro_rules! vlog {
 
 mod desktop;
 mod history;
+#[cfg(target_os = "macos")]
+mod mac;
 #[cfg(any(target_os = "linux", windows))]
 mod hold;
 #[cfg(target_os = "linux")]
@@ -1047,9 +1049,18 @@ fn type_text(text: &str) -> Res<()> {
             Ok(())
         };
         copy(text.as_bytes())?;
-        Command::new("osascript")
+        let pasted = Command::new("osascript")
             .args(["-e", r#"tell application "System Events" to keystroke "v" using command down"#])
-            .status()?;
+            .output()?;
+        if !pasted.status.success() {
+            // the text stays on the clipboard, so it can still be pasted by hand
+            let why = String::from_utf8_lossy(&pasted.stderr);
+            return Err(format!(
+                "macOS didn't let rookey type ({}): allow the app that started it under Privacy & Security > Accessibility and > Automation",
+                why.trim()
+            )
+            .into());
+        }
         if let Some(saved) = saved {
             // ponytail: the app reads the paste after the keystroke returns, on its own time;
             // 300 ms covers the usual ones, a slow one pastes the old clipboard. Way up: wait

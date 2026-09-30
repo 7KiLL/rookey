@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use base64::Engine;
 use serde_json::{Value, json};
 
-use crate::{Res, desktop, setting};
+use crate::{Res, setting};
 
 pub const READERS: [&str; 3] = ["ocr", "openai", "anthropic"];
 const OPENAI_MODEL: &str = "gpt-6-luna";
@@ -61,13 +61,16 @@ pub fn from_screen() -> Res<Context> {
 fn screenshot(format: &str) -> Res<Vec<u8>> {
     let out = match setting("ROOKEY_SCREENSHOT") {
         Some(cmd) => shell(&cmd).output()?,
+        #[cfg(target_os = "macos")]
+        None => return screencapture(format),
+        #[cfg(not(target_os = "macos"))]
         None => {
             let mut grim = Command::new("grim");
             grim.args(["-t", format]);
-            if let Some(output) = desktop::detect().focused_output() {
+            if let Some(output) = crate::desktop::detect().focused_output() {
                 grim.args(["-o", &output]);
             }
-            // ponytail: grim only; Windows and X11 set ROOKEY_SCREENSHOT to a command of their own
+            // ponytail: grim here and screencapture on macOS; Windows and X11 set ROOKEY_SCREENSHOT to a command of their own
             grim.arg("-").output().map_err(|e| format!("grim: {e} (set ROOKEY_SCREENSHOT to a command that prints a screenshot)"))?
         }
     };
@@ -77,6 +80,30 @@ fn screenshot(format: &str) -> Res<Vec<u8>> {
     }
     vlog!(2, "context: screenshot, {} KB", out.stdout.len() / 1024);
     Ok(out.stdout)
+}
+
+/// The main display through macOS's own screencapture, which writes only to a file.
+#[cfg(target_os = "macos")]
+fn screencapture(format: &str) -> Res<Vec<u8>> {
+    if !crate::mac::screen() {
+        return Err("macOS doesn't let rookey record the screen: allow the app that started it under \
+                    Privacy & Security > Screen & System Audio Recording, then quit and reopen that app"
+            .into());
+    }
+    // tesseract reads png as well as ppm, which screencapture doesn't write
+    let kind = if format == "jpeg" { "jpg" } else { "png" };
+    let file = std::env::temp_dir().join(format!("rookey-screen-{}.{kind}", std::process::id()));
+    // -x without the shutter sound, -m the main display, -t the format
+    let out = Command::new("screencapture").args(["-x", "-m", "-t", kind]).arg(&file).output()?;
+    let image = std::fs::read(&file);
+    let _ = std::fs::remove_file(&file);
+    match image {
+        Ok(image) if out.status.success() && !image.is_empty() => {
+            vlog!(2, "context: screenshot, {} KB", image.len() / 1024);
+            Ok(image)
+        }
+        _ => Err(format!("no screenshot ({}): {}", out.status, String::from_utf8_lossy(&out.stderr).trim()).into()),
+    }
 }
 
 fn ocr(image: &[u8]) -> Res<String> {
