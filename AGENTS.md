@@ -33,6 +33,7 @@ cargo test --release                                               # CPU
 | `src/win.rs` | The Windows calls: typing (SendInput), a key's state, whether a pid runs |
 | `install.sh`, `install.ps1` | Install the release build and nothing else; the model is picked in `rookey setup` |
 | `.github/workflows/release.yml`, `cliff.toml` | A `v*` tag builds every archive and writes the notes from Conventional Commits |
+| `window/` | `rookey-window`, a workspace member of its own: the page in a wry webview window. `rookey ui` starts it from beside its binary and falls back to the browser. Only it links WebKitGTK/WebView2, never `rookey`. Built and tested apart: `cargo build --release -p rookey-window`, `cargo test --release -p rookey-window` |
 | `src/ui.rs` | The `rookey ui` HTTP server: token, routes, state for the page, input checks, setup checks |
 | `src/ui/` | The page: `app.js` (arrow.js templates), `i18n.js` (every word, per language), `app.css`, the vendored `arrow.js`, fonts and icon, baked in with `include_bytes!` |
 

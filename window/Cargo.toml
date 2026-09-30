@@ -1,0 +1,12 @@
+[package]
+name = "rookey-window"
+version = "0.2.0"
+edition = "2024"
+description = "rookey's settings page in a window of its own, drawn by the system's webview"
+license = "Apache-2.0"
+
+# A binary of its own: on Linux anything linked against WebKitGTK won't start without it,
+# and rookey itself has to start everywhere.
+[dependencies]
+tao = { version = "0.37", default-features = false, features = ["rwh_06"] }
+wry = { version = "0.57", default-features = false, features = ["os-webview"] }

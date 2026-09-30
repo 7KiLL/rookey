@@ -48,7 +48,7 @@ rookey            # record until Enter, print transcript (pipe it: rookey | wl-c
 rookey -v         # show transcript text as it arrives (-vv: steps + timings, -vvv: every audio chunk)
 rookey toggle     # 1st call: start recording. 2nd call: stop, transcribe, type into focused window
 rookey listen     # Linux, Windows: hold ROOKEY_HOTKEY to talk, let go to stop (a tap keeps it going)
-rookey ui         # settings page in the browser (--no-open just prints the link); `rookey setup` is the same page
+rookey ui         # settings page in its own window, the system's webview (rookey-window; --browser for the browser, --no-open just prints the link); `rookey setup` is the same page
 rookey history    # the last transcripts, oldest first (--clear deletes them)
 rookey update     # installs a newer release (--check only says whether there is one)
 ```
@@ -149,6 +149,7 @@ From source, with cmake and a C/C++ compiler (whisper.cpp is built too):
 cargo install --path .                    # CPU
 cargo install --path . --features cuda    # NVIDIA (needs nvcc on PATH)
 cargo install --path . --features metal   # macOS
+cargo install --path window               # the settings window (Linux: needs WebKitGTK 4.1), else rookey ui opens the browser
 ```
 
 Releases: push a `v*` tag. `.github/workflows/release.yml` builds every archive above and writes the notes from the Conventional Commits since the last tag (`cliff.toml`).
