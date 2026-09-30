@@ -26,15 +26,18 @@ jobs:
           - { name: x86_64-windows, os: windows-2022 }
           - { name: x86_64-windows-cuda, os: windows-2022, features: cuda }
     runs-on: ${{ matrix.os }}
+    # the signing certificate is in the release environment, which only v* tags can use: a
+    # build of master or a branch stays ad-hoc
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
     env:
       # no GPU on the runner to ask: Turing (RTX 20) and newer, plus PTX for what comes next
       CUDAARCHS: 75-real;86-real;89-real;120-virtual
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       # ponytail: keyed by Cargo.lock and rustc, so a new stable Rust rebuilds whisper.cpp once;
       # pin the toolchain if that happens too often
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.name }}
           env-vars: CARGO CC CFLAGS CXX CMAKE RUST CUDAARCHS
@@ -45,7 +48,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libclang-dev cmake libwebkit2gtk-4.1-dev
       - name: CUDA
         if: matrix.features == 'cuda'
-        uses: Jimver/cuda-toolkit@v0.2.36
+        uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d # v0.2.36
         with:
           cuda: "13.3.1"
           # its own cache is 4 GB a runner image and would push whisper.cpp's out of the 10 GB
@@ -98,7 +101,7 @@ jobs:
               Copy-Item -Destination pack/
           }
           Compress-Archive -Path pack/* -DestinationPath dist/rookey-${{ matrix.name }}.zip
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: startsWith(github.ref, 'refs/tags/')
         with:
           name: rookey-${{ matrix.name }}
@@ -109,10 +112,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0  # the notes read every commit since the last tag
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: rookey-*  # the CUDA action uploads its installer log as an artifact too
           path: dist
@@ -121,13 +124,13 @@ jobs:
         # `rookey update` installs no archive without its line in here
         run: cd dist && sha256sum rookey-* > SHA256SUMS
       - name: Release notes
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4
         with:
           config: cliff.toml
           args: --latest --strip header
         env:
           OUTPUT: NOTES.md
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           body_path: NOTES.md
           files: |
