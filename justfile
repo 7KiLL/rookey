@@ -27,3 +27,8 @@ test:
 # follow what the hotkey listener hears and does
 logs:
     journalctl --user -u rookey-listen -f
+
+# the landing page as it deploys, on http://localhost:8089 (Ctrl-C stops it)
+site port="8089":
+    docker build -q -f site/Dockerfile -t rookey-site .
+    docker run --rm -p {{port}}:80 rookey-site
