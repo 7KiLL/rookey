@@ -38,6 +38,7 @@ fn origin(url: &str) -> Option<String> {
 }
 
 /// What the page asks of the window on macOS, where it draws under the title bar.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the event type everywhere, sent only there
 enum Chrome {
     Drag,
     Zoom,
@@ -46,6 +47,7 @@ enum Chrome {
 /// On macOS the page fills the window and the buttons float over it: a strip of paper keeps
 /// the page from scrolling under them, and pressing it moves the window like a title bar
 /// would. Only rookey's own page loads here (see the navigation handler).
+#[cfg(target_os = "macos")]
 const MAC_CHROME: &str = r#"(() => {
   document.documentElement.dataset.window = "mac";
   addEventListener("mousedown", (e) => {
