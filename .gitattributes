@@ -1,0 +1,2 @@
+# baked into the binary with include_str!: the same bytes on every system
+src/skill.md text eol=lf
