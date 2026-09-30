@@ -346,6 +346,17 @@ function checkWords(c) {
   return { title, missing };
 }
 
+/** Languages tesseract has no pack for: optional, so a note under the switch, not a failed check. */
+function ScreenLangs() {
+  const c = ui.s.checks.find((c) => c.id === "screen");
+  const langs = (c && c.langs) || [];
+  if (termsMode() === "off" || !langs.length) return "";
+  const words = [t("check.screen.langs", { langs: listOf(langs.map((l) => languageName(l))) })];
+  if (ui.s.os === "windows") words.push(" ", t("check.screen.langs.windows"));
+  // when a tool is missing too, the setup check shows the one command for all of it
+  return html`<p class="note">${words}</p>${c.ok && c.fix ? html`<span class="with-button"><code class="fix">${c.fix}</code>${copyButton(() => c.fix)}</span>` : ""}`;
+}
+
 /** The one thing that fixes a failing check: a command to copy, a settings pane, or the fix itself. */
 function checkFix(c) {
   if (c.ok) return "";
@@ -598,6 +609,7 @@ function Cleanup() {
       ${shell("ROOKEY_SANITIZE")}
       ${toggle("terms", t("terms"), terms, () => termsMode() !== "off", (e) => save({ ROOKEY_CONTEXT: e.target.checked ? "1" : "" }))}
       ${shell("ROOKEY_CONTEXT")}
+      ${() => ScreenLangs()}
     </section>`;
 }
 

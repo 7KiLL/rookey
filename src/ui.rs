@@ -767,7 +767,7 @@ fn checks(get: &dyn Fn(&str) -> String, heard: Option<bool>, model_found: bool, 
         if !packs.is_empty() {
             needed.push(installer().and_then(|i| lang_packages(i, &packs)));
         }
-        let fix = needed.into_iter().collect::<Option<Vec<_>>>().map(|p| p.join(" "));
+        let fix = needed.into_iter().collect::<Option<Vec<_>>>().and_then(|p| Some(format!("{} {}", installer()?, p.join(" "))));
         let mut words = Vec::new();
         if !missing.is_empty() {
             words.push(format!("{} missing, so the screen can't be read.", missing.join(" and ") + if missing.len() > 1 { " are" } else { " is" }));
@@ -780,15 +780,17 @@ fn checks(get: &dyn Fn(&str) -> String, heard: Option<bool>, model_found: bool, 
         }
         check(
             "screen",
-            missing.is_empty() && no_pack.is_empty(),
+            // a missing language pack is optional: the page notes it under the switch, not as a failure
+            missing.is_empty(),
             "Reading the screen",
             &words.join(" "),
-            fix.and_then(|p| Some(format!("{} {p}", installer()?))),
+            fix.clone(),
         );
         // by name too, for the page to word in its own language
         if let Some(last) = checks.last_mut() {
             last["tools"] = json!(missing);
             last["langs"] = json!(no_pack);
+            last["fix"] = json!(fix); // kept when only packs are missing: the page offers it under the switch
         }
     }
     checks
