@@ -66,4 +66,5 @@ Settings: environment variables win over `<config_dir>/rookey/config` (`KEY=valu
 
 - The code comments `ponytail:` on deliberate shortcuts. Each one names the limit and the way up. Keep adding them when you cut a corner on purpose.
 - Every non-trivial branch, parser or security path leaves one small test behind.
+- Commit and pull request titles are Conventional Commits (`feat(ui): …`, `fix: …`). A squash merge makes the PR title the commit, and the release notes (`cliff.toml`) drop any commit that isn't one.
 - Before writing to a changing API (ElevenLabs, OpenAI, Anthropic, niri, Hyprland), read its current docs. Several of them changed in 2025–2026.
