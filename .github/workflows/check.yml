@@ -1,0 +1,23 @@
+# Builds and tests on the systems nobody here can run. Linux is tested locally (see AGENTS.md).
+name: check
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, features: metal }
+          - { os: windows-2022 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test
+        shell: bash
+        run: cargo test --release --locked ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
