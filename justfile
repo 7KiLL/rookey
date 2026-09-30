@@ -17,6 +17,7 @@ build:
 install: build sign
     for f in rookey rookey-window; do install -m755 target/release/$f ~/.local/bin/$f.new && mv ~/.local/bin/$f.new ~/.local/bin/$f; done
     -if [ "$(uname)" = Darwin ]; then ~/.local/bin/rookey __restart-listen; fi
+    -if command -v systemctl >/dev/null; then systemctl --user try-restart rookey-listen; fi
 
 # macOS: sign with ROOKEY_SIGN_P12 (and ROOKEY_SIGN_PASSWORD) through rcodesign, if set. macOS
 # keeps Rookey's permissions for a certificate across builds; an unsigned build asks again.
@@ -28,7 +29,6 @@ sign:
         --binary-identifier "${pair#*:}" "target/release/${pair%%:*}" "target/release/${pair%%:*}" >/dev/null
     done
     echo "signed with $ROOKEY_SIGN_P12"
-    -if command -v systemctl >/dev/null; then systemctl --user try-restart rookey-listen; fi
 
 # install, close a running settings page, open a fresh one
 ui: install
