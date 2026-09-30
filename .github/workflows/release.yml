@@ -29,7 +29,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Linux libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libclang-dev cmake
+        # WebKitGTK for rookey-window only; rookey itself links none of it
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libclang-dev cmake libwebkit2gtk-4.1-dev
       - name: CUDA
         if: matrix.features == 'cuda'
         uses: Jimver/cuda-toolkit@v0.2.36
@@ -39,18 +40,20 @@ jobs:
       - name: Build
         shell: bash
         run: cargo build --release --locked ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
+      - name: Build the settings window
+        run: cargo build --release --locked -p rookey-window
 
       - name: Package (Linux, macOS)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          tar -czf dist/rookey-${{ matrix.name }}.tar.gz -C target/release rookey
+          tar -czf dist/rookey-${{ matrix.name }}.tar.gz -C target/release rookey rookey-window
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist, pack | Out-Null
-          Copy-Item target/release/rookey.exe pack/
+          Copy-Item target/release/rookey.exe, target/release/rookey-window.exe pack/
           if ("${{ matrix.features }}" -eq "cuda") {
             # users have the NVIDIA driver, not the toolkit: the runtime goes in the zip
             Get-ChildItem -Recurse "$env:CUDA_PATH\bin" -Include cudart64_*.dll, cublas64_*.dll, cublasLt64_*.dll |

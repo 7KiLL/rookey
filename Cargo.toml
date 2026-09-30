@@ -35,6 +35,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }  # typing, the hotkey's key state, whether a recording still runs, the on-screen pill
 
+[workspace]
+# the settings window: a binary of its own, so this one links no webview
+members = ["window"]
+
 [features]
 cuda = ["whisper-rs/cuda"]    # Linux + NVIDIA
 metal = ["whisper-rs/metal"]  # macOS

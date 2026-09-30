@@ -26,8 +26,9 @@ $url = if ($env:ROOKEY_VERSION) {
 $zip = Join-Path ([IO.Path]::GetTempPath()) "rookey-$build.zip"
 Write-Host "downloading rookey-$build"
 Invoke-WebRequest -Uri $url -OutFile $zip
-# a running listener holds rookey.exe open; it starts again from the page or at the next login
-Get-Process rookey -ErrorAction SilentlyContinue | Stop-Process -Force
+# a running listener holds rookey.exe open; it starts again from the page or at the next login.
+# The zip also brings rookey-window.exe, the settings window, held open while it shows.
+Get-Process rookey, rookey-window -ErrorAction SilentlyContinue | Stop-Process -Force
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 Expand-Archive -Path $zip -DestinationPath $dir -Force
 Remove-Item $zip

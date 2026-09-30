@@ -230,6 +230,7 @@ fn main() {
 
 fn cli() -> Res<()> {
     let (mut toggle, mut ui, mut open, mut listen, mut overlay) = (false, false, true, false, false);
+    let mut browser = false;
     let args: Vec<String> = env::args().skip(1).collect();
     for (i, arg) in args.iter().enumerate() {
         match arg.as_str() {
@@ -246,6 +247,7 @@ fn cli() -> Res<()> {
             "ui" | "setup" => ui = true,
             "listen" => listen = true,
             "--no-open" => open = false, // just print the link, for a browser somewhere else
+            "--browser" => browser = true, // the browser, not rookey's own window
             // -v, -vv, -vvv (or repeated -v) raise the level
             v if v.len() > 1 && v.starts_with('-') && v[1..].chars().all(|c| c == 'v') => {
                 VERBOSE.fetch_add(v.len() as u8 - 1, std::sync::atomic::Ordering::Relaxed);
@@ -255,7 +257,7 @@ fn cli() -> Res<()> {
             }
             _ => {
                 eprintln!(
-                    "usage: rookey [-v|-vv|-vvv] [toggle | listen | setup | ui [--no-open] | status [--json|--waybar] [--follow] | overlay | history [--clear] | update [--check] | --version]"
+                    "usage: rookey [-v|-vv|-vvv] [toggle | listen | setup | ui [--no-open|--browser] | status [--json|--waybar] [--follow] | overlay | history [--clear] | update [--check] | --version]"
                 );
                 std::process::exit(2);
             }
@@ -265,7 +267,7 @@ fn cli() -> Res<()> {
     #[cfg(windows)]
     update::clear_old();
     if ui {
-        return ui::run(open);
+        return ui::run(open, browser);
     }
     load_config();
     if overlay {

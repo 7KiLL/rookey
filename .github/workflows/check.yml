@@ -21,3 +21,5 @@ jobs:
       - name: Test
         shell: bash
         run: cargo test --release --locked ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
+      - name: Settings window
+        run: cargo build --release --locked -p rookey-window && cargo test --release --locked -p rookey-window

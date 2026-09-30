@@ -115,7 +115,7 @@ fn move_keys() {
     }
 }
 
-pub fn run(open: bool) -> Res<()> {
+pub fn run(open: bool, browser: bool) -> Res<()> {
     move_keys();
     models::clear_leftovers();
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
@@ -125,7 +125,7 @@ pub fn run(open: bool) -> Res<()> {
     eprintln!("stops when you close the page, or with Ctrl-C");
     crate::update::in_background(false);
     if open {
-        if let Err(e) = open_browser(&url) {
+        if let Err(e) = open_browser(&url, browser) {
             eprintln!("rookey ui: couldn't open a browser ({e}), open the link above");
         }
     }
@@ -146,7 +146,21 @@ fn token() -> Res<String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-fn open_browser(url: &str) -> std::io::Result<()> {
+/// The page in rookey's own window (`rookey-window`, next to this binary), or in the default
+/// browser when that is missing, can't start, or `browser` asks for it.
+fn open_browser(url: &str, browser: bool) -> std::io::Result<()> {
+    if !browser {
+        let helper = crate::exe()?.with_file_name(if cfg!(windows) { "rookey-window.exe" } else { "rookey-window" });
+        let mut cmd = Command::new(&helper);
+        cmd.arg(url).stdin(Stdio::null()).stdout(Stdio::null());
+        if crate::verbosity() < 2 {
+            cmd.stderr(Stdio::null());
+        }
+        match cmd.spawn().and_then(|child| started(child, Duration::from_secs(1))) {
+            Ok(()) => return Ok(()),
+            Err(e) => vlog!(1, "ui: no window ({}: {e}), opening the browser", helper.display()),
+        }
+    }
     // rundll32 rather than `cmd /c start`, which would split the link at its &
     let (opener, args): (&str, &[&str]) = if cfg!(windows) {
         ("rundll32", &["url.dll,FileProtocolHandler", url])
@@ -157,6 +171,20 @@ fn open_browser(url: &str) -> std::io::Result<()> {
     };
     let quiet = Stdio::null;
     Command::new(opener).args(args).stdin(quiet()).stdout(quiet()).stderr(quiet()).spawn().map(drop)
+}
+
+/// A window that fails does so at once (no WebKitGTK, no WebView2): one still running after
+/// `wait`, or that ended well, is taken as open.
+fn started(mut child: std::process::Child, wait: Duration) -> std::io::Result<()> {
+    let until = Instant::now() + wait;
+    while Instant::now() < until {
+        match child.try_wait()? {
+            Some(status) if !status.success() => return Err(std::io::Error::other(format!("it ended with {status}"))),
+            Some(_) => return Ok(()),
+            None => thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    Ok(())
 }
 
 struct Request {
@@ -930,6 +958,18 @@ mod tests {
 
     fn change(key: &str, value: &str) -> (String, String) {
         (key.to_string(), value.to_string())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_window_that_fails_falls_back() {
+        let run = |script: &str| Command::new("sh").args(["-c", script]).spawn().unwrap();
+        let wait = Duration::from_millis(500);
+        assert!(started(run("exit 1"), wait).is_err()); // no WebKitGTK: the browser instead
+        assert!(started(run("exit 0"), wait).is_ok()); // closed at once, but it opened
+        let t = Instant::now();
+        assert!(started(run("sleep 2"), wait).is_ok()); // still up: the window is open
+        assert!(t.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

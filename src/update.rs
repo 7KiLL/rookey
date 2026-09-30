@@ -483,7 +483,7 @@ fn old_name(name: &str) -> String {
     }
 }
 
-/// Moves rookey and the libraries that came with it from `from` into `to`, the binary under
+/// Moves rookey, its window and the libraries that came with it from `from` into `to`, the binary under
 /// `exe`'s name. On Unix a rename replaces a running binary and the process keeps the old one.
 /// Windows won't replace a file in use but lets it be renamed (`aside`), so the old ones move
 /// to *.old.* first and are cleared at the next start. Whatever fails halfway is put back.
@@ -494,7 +494,7 @@ fn put_in_place(from: &Path, to: &Path, exe: &Path, aside: bool) -> Res<()> {
         let name = entry.file_name().to_string_lossy().into_owned();
         let binary = name == "rookey" || name == "rookey.exe";
         // only what a release carries, and never a folder or a link
-        if !entry.file_type()?.is_file() || !(binary || name.to_lowercase().ends_with(".dll")) {
+        if !entry.file_type()?.is_file() || !(binary || ships(&name)) {
             continue;
         }
         let target = to.join(if binary { exe } else { Path::new(&name) });
@@ -534,6 +534,12 @@ fn put_in_place(from: &Path, to: &Path, exe: &Path, aside: bool) -> Res<()> {
         return Err(format!("Couldn't put the new files in {}: {e}", crate::ui::tilde(to)).into());
     }
     Ok(())
+}
+
+/// What a release carries besides rookey: the settings window (an archive without one leaves
+/// the one here as it is, and `rookey ui` falls back to the browser) and Windows' CUDA libraries.
+fn ships(name: &str) -> bool {
+    name == "rookey-window" || name == "rookey-window.exe" || name.to_lowercase().ends_with(".dll")
 }
 
 /// Clears what the last update on Windows moved aside, now that nothing runs from it.
@@ -693,12 +699,14 @@ mod tests {
     fn swaps_on_unix() {
         let (new, bin) = (scratch("unix-new"), scratch("unix-bin"));
         fs::write(new.join("rookey"), "new").unwrap();
+        fs::write(new.join("rookey-window"), "new window").unwrap();
         fs::write(new.join("README"), "not ours").unwrap();
         fs::write(bin.join("rk"), "old").unwrap();
         put_in_place(&new, &bin, Path::new("rk"), false).unwrap();
-        // under the name it has here, and nothing else came along
+        // under the name it has here, the window under its own, and nothing else came along
         assert_eq!(fs::read_to_string(bin.join("rk")).unwrap(), "new");
-        assert_eq!(fs::read_dir(&bin).unwrap().count(), 1);
+        assert_eq!(fs::read_to_string(bin.join("rookey-window")).unwrap(), "new window");
+        assert_eq!(fs::read_dir(&bin).unwrap().count(), 2);
         assert!(put_in_place(&new, &bin, Path::new("rk"), false).is_err()); // no rookey left in it
         for dir in [new, bin] {
             fs::remove_dir_all(dir).unwrap();
@@ -710,15 +718,38 @@ mod tests {
         let (new, bin) = (scratch("win-new"), scratch("win-bin"));
         fs::write(new.join("rookey.exe"), "new").unwrap();
         fs::write(new.join("cublas64_13.dll"), "new dll").unwrap();
+        fs::write(new.join("rookey-window.exe"), "new window").unwrap();
         fs::write(bin.join("rookey.exe"), "running").unwrap();
+        fs::write(bin.join("rookey-window.exe"), "open").unwrap();
         fs::write(bin.join("rookey.old.exe"), "from the last update").unwrap();
         put_in_place(&new, &bin, Path::new("rookey.exe"), true).unwrap();
         assert_eq!(fs::read_to_string(bin.join("rookey.exe")).unwrap(), "new");
         assert_eq!(fs::read_to_string(bin.join("rookey.old.exe")).unwrap(), "running");
         assert_eq!(fs::read_to_string(bin.join("cublas64_13.dll")).unwrap(), "new dll");
+        assert_eq!(fs::read_to_string(bin.join("rookey-window.exe")).unwrap(), "new window");
+        assert_eq!(fs::read_to_string(bin.join("rookey-window.old.exe")).unwrap(), "open");
         assert!(is_old("rookey.old.exe") && is_old("cudart64_13.OLD.dll"));
         assert!(!is_old("rookey.exe") && !is_old("old.exe") && !is_old("rookey.old"));
         assert_eq!(old_name("rookey.exe"), "rookey.old.exe");
+        for dir in [new, bin] {
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn an_update_without_a_window_keeps_the_one_here() {
+        let (new, bin) = (scratch("nowin-new"), scratch("nowin-bin"));
+        fs::write(new.join("rookey"), "new").unwrap();
+        fs::write(bin.join("rookey"), "old").unwrap();
+        fs::write(bin.join("rookey-window"), "old window").unwrap();
+        put_in_place(&new, &bin, Path::new("rookey"), false).unwrap();
+        assert_eq!(fs::read_to_string(bin.join("rookey")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(bin.join("rookey-window")).unwrap(), "old window");
+        // a window alone is no update
+        fs::write(new.join("rookey-window"), "new window").unwrap();
+        assert!(put_in_place(&new, &bin, Path::new("rookey"), false).is_err());
+        assert!(ships("rookey-window.exe") && ships("cudart64_13.DLL"));
+        assert!(!ships("rookey") && !ships("rookey-window.sh") && !ships("README"));
         for dir in [new, bin] {
             fs::remove_dir_all(dir).unwrap();
         }
