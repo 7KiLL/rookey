@@ -57,6 +57,7 @@ const ui = reactive({
   provider: null, // { id, where: "engine" | "keys", doing: "edit" | "remove" }
   hotkey: { way: null, editing: false, chord: null, file: null, files: false, taken: null, problem: "", pressing: false },
   history: { entries: [], path: "", keep: 0, all: false, clearing: false }, // entries newest first
+  pill: { custom: false, at: null }, // Custom picked; the place while it is dragged, before it is saved
 });
 
 /** Theme and language go on <html>: CSS picks the tokens, the browser the hyphenation. */
@@ -144,6 +145,8 @@ const reader = () => (values().ROOKEY_READER in READERS ? values().ROOKEY_READER
 const provider = (id) => ui.s.providers.find((p) => p.id === id);
 const SOUND_SETS = ["rook", "notes", "pencil"]; // sound::SETS, the first is the default
 const PILL_STYLES = ["full", "compact", "dot"]; // overlay::STYLES, the first is the default
+// ROOKEY_PILL_AT, in percent of the room the pill has; bottom is overlay::DEFAULT_AT
+const PILL_PLACES = { "top-left": [0, 0], top: [50, 0], "top-right": [100, 0], "bottom-left": [0, 100], bottom: [50, 100], "bottom-right": [100, 100] };
 const CUES = ["start", "stop", "typed", "failed"];
 const soundSet = () => (SOUND_SETS.includes(values().ROOKEY_SOUNDS) ? values().ROOKEY_SOUNDS : SOUND_SETS[0]);
 const hasKey = (id) => provider(id).saved || provider(id).env;
@@ -322,7 +325,9 @@ function checkWords(c) {
   let title = t(`check.${c.id}.title`);
   // macOS grants its permissions to the app rookey ui runs in, named where the server could
   const app = ui.s.app || t("check.app.unknown");
-  let missing = tx(`check.${c.id}.missing`, { engine, app });
+  // Rookey, the app that hears the hotkey on macOS, has words of its own where they differ
+  const words = ui.s.rookey && has(`check.${c.id}.rookey`) ? `check.${c.id}.rookey` : `check.${c.id}.missing`;
+  let missing = tx(words, { engine, app });
   if (c.id === "mic" && c.title.includes(": ")) title = t("check.mic.named", { name: c.title.split(": ").slice(1).join(": ") });
   // which tools, as the server found them with the environment winning over the config
   if (c.id === "screen") missing = tx("check.screen.missing", { tools: listOf(c.tools || []) });
@@ -868,6 +873,8 @@ function Hotkey() {
     const chord = code(set().chord);
     if (!listening()) return tx("hotkey.bound", { chord, file: code(set().file) });
     if (!ui.s.listen.running) return tx("hotkey.not-running", { chord });
+    // on macOS Rookey hears the keys itself, from login, and keeps all but a lone modifier
+    if (ui.s.os === "macos") return [...tx("hotkey.hold.rookey", { chord }), ui.s.listen.swallowed ? t("hotkey.swallowed.rookey") : ""];
     const more = ui.s.listen.swallowed ? t("hotkey.swallowed", { desktop: desktopName() }) : t("hotkey.passes");
     return [...tx("hotkey.hold", { chord }), more];
   };
@@ -900,10 +907,9 @@ function Hotkey() {
 
       ${toggle("sounds", t("sounds"), t("sounds.about"), () => !isOn(values().ROOKEY_QUIET), (e) =>
         save({ ROOKEY_QUIET: e.target.checked ? "" : "1" }))}
-      ${() => (ui.s.os === "macos" ? "" : html`
       ${toggle("overlay", t("overlay"), tx("overlay.about", { cmd: code("rookey status --follow") }), () => !isOn(values().ROOKEY_NO_OVERLAY), (e) =>
         save({ ROOKEY_NO_OVERLAY: e.target.checked ? "" : "1" }))}
-      ${() => (isOn(values().ROOKEY_NO_OVERLAY) ? "" : PillStyle())}`)}
+      ${() => (isOn(values().ROOKEY_NO_OVERLAY) ? "" : html`${PillStyle()}${PillPlace()}`)}
       ${toggle("notifications", t("notifications"), t("notifications.about"), () => !isOn(values().ROOKEY_NO_NOTIFICATIONS), (e) =>
         save({ ROOKEY_NO_NOTIFICATIONS: e.target.checked ? "" : "1" }))}
     </section>`;
@@ -921,6 +927,93 @@ function PillStyle() {
       </div>
       <div class="pill-preview" aria-hidden="true">${PillDrawing(style)}</div>
       <p class="hint">${() => t(`pill.${style()}.about`)}</p>
+    </div>`;
+}
+
+/** Where the pill goes: ROOKEY_PILL_AT as [x, y] percent, the bottom centre when unset. */
+function pillAt() {
+  if (ui.pill.at) return ui.pill.at;
+  const set = /^\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*$/.exec(values().ROOKEY_PILL_AT || "");
+  return set ? [Number(set[1]), Number(set[2])] : PILL_PLACES.bottom;
+}
+
+/** The preset the pill is at, or "custom". */
+function pillPlace() {
+  if (ui.pill.custom) return "custom";
+  const [x, y] = pillAt();
+  return Object.keys(PILL_PLACES).find((id) => PILL_PLACES[id][0] === x && PILL_PLACES[id][1] === y) ?? "custom";
+}
+
+/** Saves a place; the bottom centre is the default, saved as empty. */
+async function savePillAt([x, y]) {
+  ui.pill.at = [x, y]; // shown while it saves, so a quick second arrow key starts from here
+  const [bx, by] = PILL_PLACES.bottom;
+  await save({ ROOKEY_PILL_AT: x === bx && y === by ? "" : `${x},${y}` });
+  ui.pill.at = null;
+}
+
+// The small screen, in its own units: the room the pill's top-left corner has inside the
+// margins, as overlay::spot has it, with a menu bar on top and a Dock below.
+const MINI = { w: 320, h: 200, left: 8, top: 18, roomW: 236, roomH: 144, pillW: 64, pillH: 10 };
+const clamp = (n) => Math.min(100, Math.max(0, n));
+
+function PillPlace() {
+  const pick = (id) => () => {
+    ui.pill.custom = id === "custom";
+    if (id !== "custom") savePillAt(PILL_PLACES[id]);
+  };
+  const custom = () => pillPlace() === "custom";
+  const px = () => MINI.left + (MINI.roomW * pillAt()[0]) / 100;
+  const py = () => MINI.top + (MINI.roomH * pillAt()[1]) / 100;
+  const words = () => ({ x: Math.round(pillAt()[0]), y: Math.round(pillAt()[1]) });
+  // where the pointer is, as the place of the pill centred under it
+  const from = (e) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - box.left) / box.width) * MINI.w - MINI.pillW / 2;
+    const y = ((e.clientY - box.top) / box.height) * MINI.h - MINI.pillH / 2;
+    return [Math.round(clamp(((x - MINI.left) / MINI.roomW) * 100)), Math.round(clamp(((y - MINI.top) / MINI.roomH) * 100))];
+  };
+  let dragging = false;
+  const down = (e) => {
+    dragging = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    ui.pill.at = from(e);
+  };
+  const move = (e) => {
+    if (dragging) ui.pill.at = from(e);
+  };
+  const up = () => {
+    if (!dragging) return;
+    dragging = false;
+    savePillAt(pillAt());
+  };
+  const key = (e) => {
+    const step = e.shiftKey ? 10 : 1;
+    const by = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    if (!by) return;
+    e.preventDefault();
+    const [x, y] = pillAt();
+    savePillAt([clamp(Math.round(x) + by[0]), clamp(Math.round(y) + by[1])]);
+  };
+  return html`
+    <div class="sub" id="pill-where-field">
+      <h3 id="pill-where">${t("pill.where")}</h3>
+      <div class="chips" role="radiogroup" aria-labelledby="pill-where">
+        ${[...Object.keys(PILL_PLACES), "custom"].map((id) =>
+          chip("radio", "pill-where", id, () => pillPlace() === id, t(`pill.where.${id}`), pick(id)))}
+      </div>
+      ${() => (custom() ? html`
+        <svg class="pill-where" viewBox="0 0 320 200" tabindex="0" role="img" aria-label="${() => t("pill.where.label", words())}"
+          @pointerdown="${down}" @pointermove="${move}" @pointerup="${up}" @pointercancel="${up}" @keydown="${key}">
+          <rect class="pw-screen" x="1" y="1" width="318" height="198" rx="9"></rect>
+          <rect class="pw-bar" x="1" y="1" width="318" height="10"></rect>
+          <rect class="pw-dock" x="85" y="182" width="150" height="12" rx="5"></rect>
+          <rect class="pw-room" x="8" y="18" width="300" height="154" rx="4"></rect>
+          <rect class="pw-pill" x="${px}" y="${py}" width="64" height="10" rx="5"></rect>
+          <circle class="pw-dot" cx="${() => px() + 7}" cy="${() => py() + 5}" r="1.8"></circle>
+        </svg>
+        <p class="pill-where-at">${() => t("pill.where.readout", words())}</p>` : "")}
+      <p class="hint">${() => t(custom() ? "pill.where.custom.about" : "pill.where.about")}</p>
     </div>`;
 }
 

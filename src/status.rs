@@ -82,11 +82,7 @@ pub fn read() -> Option<Value> {
 }
 
 fn running(pid: u32) -> bool {
-    #[cfg(any(target_os = "linux", windows))]
-    return crate::alive(pid);
-    // ponytail: macOS trusts the file; a crashed recording shows until the next one
-    #[cfg(not(any(target_os = "linux", windows)))]
-    return pid > 0;
+    crate::alive(pid)
 }
 
 /// What is true at `now`, from the file: `{"state": "listening", "seconds": 4, "level": 0.41}`.
@@ -135,16 +131,7 @@ pub fn waybar(now: &Value) -> Value {
 }
 
 /// `rookey status [--json | --waybar] [--follow]`
-pub fn run(args: &[String]) -> Res<()> {
-    let (mut json, mut waybar_out, mut follow) = (false, false, false);
-    for a in args {
-        match a.as_str() {
-            "--json" => json = true,
-            "--waybar" => waybar_out = true,
-            "--follow" | "-f" => follow = true,
-            _ => return Err(format!("status takes --json, --waybar and --follow, not {a}").into()),
-        }
-    }
+pub fn run(json: bool, waybar_out: bool, follow: bool) -> Res<()> {
     let line = |now: &Value| match () {
         _ if waybar_out => waybar(now).to_string(),
         _ if json => now.to_string(),

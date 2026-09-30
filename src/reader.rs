@@ -86,6 +86,13 @@ fn screenshot(format: &str) -> Res<Vec<u8>> {
 #[cfg(target_os = "macos")]
 fn screencapture(format: &str) -> Res<Vec<u8>> {
     if !crate::mac::screen() {
+        if crate::mac::is_app() {
+            // puts Rookey in the list, where its switch is; the first time, it asks as well
+            crate::mac::ask_screen();
+            return Err("macOS doesn't let Rookey record the screen: allow it under Privacy & Security > \
+                        Screen & System Audio Recording, then set the hotkey again on the page, which starts Rookey again"
+                .into());
+        }
         return Err("macOS doesn't let rookey record the screen: allow the app that started it under \
                     Privacy & Security > Screen & System Audio Recording, then quit and reopen that app"
             .into());

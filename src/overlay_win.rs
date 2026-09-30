@@ -17,7 +17,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_TRANSPARENT, WS_POPUP,
 };
 
-use crate::overlay::{H, MARGIN, Pill, W};
+use crate::overlay::{H, Pill, W, spot};
 use crate::status::now_ms;
 
 pub fn run() -> crate::Res<()> {
@@ -28,7 +28,8 @@ pub fn run() -> crate::Res<()> {
         let (w, h) = ((W * scale) as i32, (H * scale) as i32);
         let mut work = RECT { left: 0, top: 0, right: 0, bottom: 0 };
         SystemParametersInfoW(SPI_GETWORKAREA, 0, (&raw mut work).cast(), 0);
-        let at = POINT { x: (work.left + work.right - w) / 2, y: work.bottom - h - MARGIN * scale as i32 };
+        let (x, y) = spot((work.right - work.left) as f64, (work.bottom - work.top) as f64, scale as f64, crate::overlay::at());
+        let at = POINT { x: work.left + x.round() as i32, y: work.top + y.round() as i32 };
 
         let class: Vec<u16> = "rookey-overlay\0".encode_utf16().collect();
         let instance = GetModuleHandleW(std::ptr::null());

@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoop};
+use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::WindowBuilder;
 use wry::{NewWindowResponse, WebContext, WebViewBuilder};
 
@@ -17,6 +17,8 @@ fn main() {
         eprintln!("usage: rookey-window http://127.0.0.1:<port>/...  (the page `rookey ui` serves)");
         std::process::exit(2);
     };
+    #[cfg(target_os = "macos")]
+    bundle::enter(&url);
     if let Err(e) = run(&url, origin) {
         eprintln!("rookey-window: {e}");
         std::process::exit(1);
@@ -35,15 +37,38 @@ fn origin(url: &str) -> Option<String> {
     Some(format!("http://127.0.0.1:{port}/"))
 }
 
+/// What the page asks of the window on macOS, where it draws under the title bar.
+enum Chrome {
+    Drag,
+    Zoom,
+}
+
+/// On macOS the page fills the window and the buttons float over it: a strip of paper keeps
+/// the page from scrolling under them, and pressing it moves the window like a title bar
+/// would. Only rookey's own page loads here (see the navigation handler).
+const MAC_CHROME: &str = r#"(() => {
+  document.documentElement.dataset.window = "mac";
+  addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || e.clientY >= 28 || e.target.closest?.("a, button, input, select, textarea, label, summary")) return;
+    window.ipc.postMessage(e.detail === 2 ? "zoom" : "drag");
+  });
+})();"#;
+
 fn run(url: &str, origin: String) -> Result<(), Box<dyn std::error::Error>> {
-    let event_loop = EventLoop::new();
-    // ponytail: no window icon, the page's is an SVG and tao takes pixels; rasterize it at
-    // build time if a taskbar ever shows the blank one.
-    let window = WindowBuilder::new()
+    let event_loop = EventLoopBuilder::<Chrome>::with_user_event().build();
+    // ponytail: no window icon on Windows and Linux, the page's is an SVG and tao takes
+    // pixels (macOS gets its icon from the bundle); rasterize it at build time if a taskbar
+    // ever shows the blank one.
+    let builder = WindowBuilder::new()
         .with_title("rookey settings")
         .with_inner_size(LogicalSize::new(1100.0, 860.0))
-        .with_min_inner_size(LogicalSize::new(380.0, 480.0))
-        .build(&event_loop)?;
+        .with_min_inner_size(LogicalSize::new(380.0, 480.0));
+    #[cfg(target_os = "macos")]
+    let builder = {
+        use tao::platform::macos::WindowBuilderExtMacOS;
+        builder.with_titlebar_transparent(true).with_title_hidden(true).with_fullsize_content_view(true)
+    };
+    let window = builder.build(&event_loop)?;
 
     // WebView2 would keep its data next to the binary, which may be read-only
     let data = if cfg!(windows) {
@@ -53,6 +78,8 @@ fn run(url: &str, origin: String) -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut context = WebContext::new(data);
     let stay = origin.clone();
+    #[cfg(target_os = "macos")]
+    let origin_again = origin.clone();
     let builder = WebViewBuilder::new_with_web_context(&mut context)
         .with_url(url)
         // links out of the page (an API key's account page) open in the browser instead
@@ -63,6 +90,21 @@ fn run(url: &str, origin: String) -> Result<(), Box<dyn std::error::Error>> {
             }
             NewWindowResponse::Deny
         });
+    #[cfg(target_os = "macos")]
+    let builder = {
+        let proxy = event_loop.create_proxy();
+        let page = origin_again;
+        builder.with_initialization_script(MAC_CHROME).with_ipc_handler(move |asked| {
+            if !asked.uri().to_string().starts_with(&page) {
+                return;
+            }
+            let _ = proxy.send_event(match asked.body().as_str() {
+                "drag" => Chrome::Drag,
+                "zoom" => Chrome::Zoom,
+                _ => return,
+            });
+        })
+    };
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let _webview = {
         use tao::platform::unix::WindowExtUnix;
@@ -74,10 +116,112 @@ fn run(url: &str, origin: String) -> Result<(), Box<dyn std::error::Error>> {
 
     event_loop.run(move |event, _, flow| {
         *flow = ControlFlow::Wait;
-        if let Event::WindowEvent { event: WindowEvent::CloseRequested, .. } = event {
-            *flow = ControlFlow::Exit;
+        match event {
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => *flow = ControlFlow::Exit,
+            Event::UserEvent(Chrome::Drag) => {
+                let _ = window.drag_window();
+            }
+            Event::UserEvent(Chrome::Zoom) => window.set_maximized(!window.is_maximized()),
+            _ => {}
         }
     })
+}
+
+/// macOS names an app in the Dock and the menu bar after the bundle it runs from, and a bare
+/// binary after its file: "rookey-window" with a blank icon. So the window puts a bundle of
+/// its own together, a copy of itself with a name and an icon, and runs from there. Kept in
+/// the caches: the release, the install script and `rookey update` only ever see one file.
+#[cfg(target_os = "macos")]
+mod bundle {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    use std::path::{Path, PathBuf};
+    use std::{env, fs, io};
+
+    // ponytail: the bundle shows up in Spotlight, and opened from there it has no page to show
+    // and exits; the way up is to run `rookey ui` from beside the binary it was copied from.
+    const ICON: &[u8] = include_bytes!("../macos/rookey.icns");
+
+    /// Runs this window from its bundle, under the same pid, so `rookey ui` still sees its
+    /// child. Returns only when it can't, and then the window opens as it is.
+    pub fn enter(url: &str) {
+        let Ok(me) = env::current_exe() else { return };
+        if me.to_string_lossy().contains(".app/Contents/MacOS/") {
+            return;
+        }
+        let Some(app) = env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Caches/rookey/Rookey Settings.app")) else {
+            return;
+        };
+        match place(&me, &app) {
+            Ok(exe) => eprintln!("rookey-window: can't run from {} ({})", app.display(), std::process::Command::new(exe).arg(url).exec()),
+            Err(e) => eprintln!("rookey-window: can't put {} together ({e})", app.display()),
+        }
+    }
+
+    /// The bundle with this binary in it, written again whenever the binary changed.
+    fn place(me: &Path, app: &Path) -> io::Result<PathBuf> {
+        let contents = app.join("Contents");
+        let exe = contents.join("MacOS/rookey-window");
+        let bytes = fs::read(me)?;
+        if fs::read(&exe).is_ok_and(|there| there == bytes) {
+            return Ok(exe);
+        }
+        fs::create_dir_all(contents.join("MacOS"))?;
+        fs::create_dir_all(contents.join("Resources"))?;
+        fs::write(contents.join("Info.plist"), info())?;
+        fs::write(contents.join("Resources/rookey.icns"), ICON)?;
+        // a new file then a rename: another window may be running the old copy
+        let new = exe.with_extension("new");
+        fs::write(&new, &bytes)?;
+        fs::set_permissions(&new, fs::Permissions::from_mode(0o755))?;
+        fs::rename(&new, &exe)?;
+        Ok(exe)
+    }
+
+    /// Changing the identifier loses what macOS keeps under it: the webview's storage now,
+    /// and any permission this bundle is ever given.
+    pub fn info() -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>io.github.7kill.rookey.settings</string>
+  <key>CFBundleName</key><string>Rookey Settings</string>
+  <key>CFBundleDisplayName</key><string>Rookey Settings</string>
+  <key>CFBundleExecutable</key><string>rookey-window</string>
+  <key>CFBundleIconFile</key><string>rookey</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>{}</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+"#,
+            env!("CARGO_PKG_VERSION")
+        )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn puts_itself_together_once() {
+            let dir = env::temp_dir().join(format!("rookey-bundle-{}", std::process::id()));
+            let (me, app) = (dir.join("rookey-window"), dir.join("Rookey Settings.app"));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(&me, "one").unwrap();
+            let exe = place(&me, &app).unwrap();
+            assert_eq!(fs::read_to_string(&exe).unwrap(), "one");
+            assert_eq!(fs::metadata(&exe).unwrap().permissions().mode() & 0o777, 0o755);
+            assert!(app.join("Contents/Resources/rookey.icns").is_file());
+            // CFBundleName shows only 15 characters
+            assert!(info().contains("<string>Rookey Settings</string>") && "Rookey Settings".len() <= 15);
+            fs::write(&me, "two").unwrap();
+            assert_eq!(fs::read_to_string(place(&me, &app).unwrap()).unwrap(), "two");
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
 }
 
 /// Opens an https link in the default browser. False when it isn't one, or nothing opened it.

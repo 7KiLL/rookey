@@ -1,10 +1,6 @@
 //! rookey: record the mic, transcribe locally with whisper.cpp, print or type the text.
 //!
-//!   rookey          record until Enter (or Ctrl-C), print transcript to stdout
-//!   rookey toggle   first call starts recording, second call stops it and types the text
-//!   rookey ui       settings in the browser (`rookey setup` too: what's missing comes first)
-//!   rookey history  the last transcripts, kept on this computer (`--clear` deletes them)
-//!   rookey update   installs a newer release (`--check` only says whether there is one)
+//! The commands and their help are in cli.rs; `rookey --help` lists them.
 //!
 //! Settings are env vars, or KEY=value lines in <config_dir>/rookey/config (the environment wins):
 //! ROOKEY_MODEL (ggml model path), ROOKEY_LANG (default "auto"), ROOKEY_BACKEND,
@@ -19,6 +15,7 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock, mpsc};
 use std::time::{Duration, Instant};
 use std::{env, fs, thread};
 
+use cli::Cmd;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SizedSample};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -46,19 +43,24 @@ macro_rules! vlog {
     };
 }
 
+mod cli;
 mod desktop;
 mod history;
 #[cfg(target_os = "macos")]
 mod mac;
-#[cfg(any(target_os = "linux", windows))]
 mod hold;
 #[cfg(target_os = "linux")]
 mod listen;
 #[cfg(windows)]
 #[path = "listen_win.rs"]
 mod listen;
+#[cfg(target_os = "macos")]
+#[path = "listen_mac.rs"]
+mod listen;
 mod models;
 mod overlay;
+#[cfg(target_os = "macos")]
+mod overlay_mac;
 #[cfg(windows)]
 mod overlay_win;
 mod reader;
@@ -92,12 +94,13 @@ fn stopfile() -> PathBuf {
 }
 
 /// Whether the process with this pid still runs.
-#[cfg(any(target_os = "linux", windows))]
 fn alive(pid: u32) -> bool {
     #[cfg(windows)]
     return win::alive(pid);
     #[cfg(target_os = "linux")]
     return std::path::Path::new("/proc").join(pid.to_string()).exists();
+    #[cfg(target_os = "macos")]
+    return mac::alive(pid);
 }
 
 /// A program started from a hotkey or the page gets no console window of its own on Windows.
@@ -113,6 +116,18 @@ fn no_window(cmd: &mut Command) {
 /// moved aside to rookey.old.exe.
 fn exe() -> std::io::Result<PathBuf> {
     Ok(on_disk(env::current_exe()?))
+}
+
+/// The rookey that was installed: this binary, or on macOS, when this is Rookey's copy, the one
+/// it was copied from. Updates and the settings window belong next to that one.
+fn installed() -> std::io::Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    if mac::is_app() {
+        if let Some(source) = mac::source() {
+            return Ok(source);
+        }
+    }
+    exe()
 }
 
 fn on_disk(exe: PathBuf) -> PathBuf {
@@ -231,39 +246,51 @@ fn main() {
 }
 
 fn cli() -> Res<()> {
+    // as given, for Rookey to be started with (macOS)
+    #[cfg(target_os = "macos")]
+    let args: Vec<String> = env::args().skip(1).collect();
+    #[cfg(target_os = "macos")]
+    mac::keys_handed_over();
+    let cli = cli::parse();
+    VERBOSE.store(cli.verbose, std::sync::atomic::Ordering::Relaxed);
     let (mut toggle, mut ui, mut open, mut listen, mut overlay) = (false, false, true, false, false);
     let mut browser = false;
-    let args: Vec<String> = env::args().skip(1).collect();
-    for (i, arg) in args.iter().enumerate() {
-        match arg.as_str() {
-            // the rest of the line is status's own flags
-            "status" => return status::run(&args[i + 1..]),
-            "history" => return history::run(&args[i + 1..]),
-            "update" => return update::run(&args[i + 1..]),
-            "--version" | "-V" => {
-                println!("rookey {}", update::VERSION);
-                return Ok(());
-            }
-            "overlay" => overlay = true,
-            "toggle" => toggle = true,
-            "ui" | "setup" => ui = true,
-            "listen" => listen = true,
-            "--no-open" => open = false, // just print the link, for a browser somewhere else
-            "--browser" => browser = true, // the browser, not rookey's own window
-            // -v, -vv, -vvv (or repeated -v) raise the level
-            v if v.len() > 1 && v.starts_with('-') && v[1..].chars().all(|c| c == 'v') => {
-                VERBOSE.fetch_add(v.len() as u8 - 1, std::sync::atomic::Ordering::Relaxed);
-            }
-            "--verbose" => {
-                VERBOSE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-            _ => {
-                eprintln!(
-                    "usage: rookey [-v|-vv|-vvv] [toggle | listen | setup | ui [--no-open|--browser] | status [--json|--waybar] [--follow] | overlay | history [--clear] | update [--check] | --version]"
-                );
-                std::process::exit(2);
-            }
-        }
+    match cli.command {
+        None => {}
+        Some(Cmd::Toggle) => toggle = true,
+        Some(Cmd::Listen) => listen = true,
+        Some(Cmd::Setup(page) | Cmd::Ui(page)) => (ui, open, browser) = (true, !page.no_open, page.browser),
+        Some(Cmd::Overlay) => overlay = true,
+        Some(Cmd::Status(s)) => return status::run(s.json, s.waybar, s.follow),
+        Some(Cmd::History { clear }) => return history::run(clear),
+        Some(Cmd::Update { check }) => return update::run(!check),
+        Some(Cmd::Skills { install }) => return cli::skill(install),
+        #[cfg(target_os = "macos")]
+        Some(Cmd::Access) => return ui::access_here(),
+        #[cfg(target_os = "macos")]
+        Some(Cmd::Ask { args }) => return ui::ask_here(&args),
+        #[cfg(target_os = "macos")]
+        Some(Cmd::Capture { args }) => return listen::capture_here(&args),
+        #[cfg(target_os = "macos")]
+        Some(Cmd::RestartListen) => return listen::restart(&exe()?).map(drop),
+        #[cfg(not(target_os = "macos"))]
+        Some(Cmd::Access | Cmd::Ask { .. } | Cmd::Capture { .. } | Cmd::RestartListen) => return Err("that one is for macOS".into()),
+    }
+    // Rookey opened by itself (a double-click, or macOS reopening it after a permission
+    // changed) has nothing to record for: it shows the settings instead
+    #[cfg(target_os = "macos")]
+    if args.is_empty() && mac::is_app() {
+        ui = true;
+    }
+    // On macOS the page and the hotkey's recordings run as Rookey, so what they ask for is
+    // Rookey's, not the terminal's or the hotkey app's. A plain `rookey` stays in the terminal.
+    #[cfg(target_os = "macos")]
+    if (ui || toggle) && !mac::is_app() && env::var_os("ROOKEY_IN_TERMINAL").is_none() {
+        return mac::relaunch(&args, ui);
+    }
+    #[cfg(target_os = "macos")]
+    if ui && mac::is_app() {
+        mac::stop_with_waiter();
     }
     move_from_yap();
     #[cfg(windows)]
@@ -276,10 +303,7 @@ fn cli() -> Res<()> {
         return overlay::run();
     }
     if listen {
-        #[cfg(any(target_os = "linux", windows))]
         return listen::run();
-        #[cfg(not(any(target_os = "linux", windows)))]
-        return Err("`rookey listen` works on Linux and Windows; bind `rookey toggle` instead".into());
     }
 
     let pidfile = pidfile();
@@ -954,10 +978,21 @@ where
                 frame.iter().map(|&s| f32::from_sample(s)).sum::<f32>() / channels as f32
             }));
         },
-        |e| eprintln!("audio error: {e}"),
+        audio_error,
         None,
     )?;
     Ok(stream)
+}
+
+/// What the sound system reports while a stream runs. A glitch (an under- or overrun, which
+/// macOS reports as a stream starts or stops) loses a few samples at most: not worth a word
+/// unless asked for.
+fn audio_error(e: cpal::Error) {
+    if e.kind() == cpal::ErrorKind::Xrun {
+        vlog!(2, "audio: {e}");
+    } else {
+        eprintln!("audio error: {e}");
+    }
 }
 
 /// Linear-interpolation resampler.
@@ -1058,8 +1093,9 @@ fn type_text(text: &str) -> Res<()> {
             // the text stays on the clipboard, so it can still be pasted by hand
             let why = String::from_utf8_lossy(&pasted.stderr);
             return Err(format!(
-                "macOS didn't let rookey type ({}): allow the app that started it under Privacy & Security > Accessibility and > Automation",
-                why.trim()
+                "macOS didn't let rookey type ({}): allow {} under Privacy & Security > Accessibility and > Automation",
+                why.trim(),
+                if mac::is_app() { "Rookey" } else { "the app that started it" }
             )
             .into());
         }

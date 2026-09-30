@@ -47,10 +47,12 @@ The installers put the release build for your system on your PATH and nothing el
 rookey            # record until Enter, print transcript (pipe it: rookey | wl-copy)
 rookey -v         # show transcript text as it arrives (-vv: steps + timings, -vvv: every audio chunk)
 rookey toggle     # 1st call: start recording. 2nd call: stop, transcribe, type into focused window
-rookey listen     # Linux, Windows: hold ROOKEY_HOTKEY to talk, let go to stop (a tap keeps it going)
+rookey listen     # hold ROOKEY_HOTKEY to talk, let go to stop (a tap keeps it going)
 rookey ui         # settings page in its own window, the system's webview (rookey-window; --browser for the browser, --no-open just prints the link); `rookey setup` is the same page
 rookey history    # the last transcripts, oldest first (--clear deletes them)
 rookey update     # installs a newer release (--check only says whether there is one)
+rookey skills     # a skill for coding agents: how to use rookey and find out why it failed (--install puts it in ~/.claude/skills)
+rookey --help     # every command, and the settings with where they are saved on this system
 ```
 
 Every transcript is kept before it is typed, so text that went into the wrong window, or wasn't typed at all, can be copied again: the last 500, as JSON lines in `~/.local/share/rookey/history`, readable only by you and never uploaded. `rookey ui` lists them with a Copy button each. `ROOKEY_HISTORY=0` keeps none. Tests on the settings page aren't kept.

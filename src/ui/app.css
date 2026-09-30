@@ -115,6 +115,21 @@ body {
   margin: 0;
 }
 
+/* rookey's own window on macOS draws the page under the title bar: a strip of paper keeps
+   the text from scrolling under the window's buttons, and moves the window when pressed */
+:root[data-window="mac"] {
+  --titlebar: 28px;
+}
+
+:root[data-window="mac"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--titlebar);
+  background: var(--paper);
+  z-index: 100;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   html {
     scroll-behavior: smooth;
@@ -206,7 +221,7 @@ pre,
 
 .specimen-inner {
   position: sticky;
-  top: 0;
+  top: var(--titlebar, 0);
   max-width: var(--column);
   padding: 4rem 0 3rem;
 }
@@ -740,6 +755,64 @@ input[type="checkbox"] {
   box-shadow: 0 0 0 1px rgb(246 249 239 / 0.18);
 }
 
+/* where the pill goes: a small screen, and the pill on it to drag */
+.pill-where {
+  display: block;
+  width: min(20rem, 100%);
+  height: auto;
+  margin-top: 0.75rem;
+  touch-action: none;
+  cursor: grab;
+  border-radius: 10px;
+}
+
+.pill-where:active {
+  cursor: grabbing;
+}
+
+.pill-where:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
+.pw-screen {
+  fill: var(--paper-raised);
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+
+.pw-bar,
+.pw-dock {
+  fill: var(--rule);
+}
+
+.pw-room {
+  fill: none;
+  stroke: var(--ink-soft);
+  stroke-dasharray: 3 3;
+}
+
+/* the ink of the page, not the pill's own dark: on a dark page a dark pill would vanish */
+.pw-pill {
+  fill: var(--ink);
+}
+
+.pw-dot {
+  fill: var(--pill-red);
+}
+
+#pill-where-field {
+  padding-bottom: 1rem;
+}
+
+.pill-where-at {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  font: 400 0.8125rem/1.4 var(--keys);
+  font-stretch: 87%;
+  font-variant-numeric: tabular-nums;
+}
+
 .pill:has(.pill-clock[hidden]) {
   padding-right: 14px;
 }
@@ -1146,7 +1219,7 @@ textarea:focus-visible {
 
 .stopped {
   position: sticky;
-  top: 0;
+  top: var(--titlebar, 0);
   z-index: 2;
   padding: 0.875rem var(--gutter);
   background: var(--red);
