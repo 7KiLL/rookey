@@ -10,7 +10,7 @@
 <style>
 /* the settings page's steno pad: green-tinted paper, a red rule, a proofreader's red pencil */
 @font-face { font-family: "Commissioner"; src: url("/fonts/commissioner-latin.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
-@font-face { font-family: "Martian Mono"; src: url("/fonts/martian-mono-latin.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
+@font-face { font-family: "Martian Mono"; src: url("/fonts/martian-mono-latin.woff2") format("woff2"); font-weight: 100 800; font-stretch: 75% 112.5%; font-display: swap; }
 
 :root {
   --paper: #E8EFDF; --raised: #F6F9EF; --ink: #17231E; --soft: #4A5B52; --rule: #B5C9B4;
@@ -90,19 +90,19 @@ kbd { font-size: 12px; padding: 4px 8px; border: 1px solid var(--ink); border-ra
 .pad s { color: var(--red); text-decoration-thickness: 2px; }
 .term { font-family: var(--keys); font-size: 15px; background: var(--paper); padding: 1px 6px; border-radius: 4px; }
 .caret { display: inline-block; width: 2px; height: 1.2em; background: var(--ink); vertical-align: -0.2em; margin-left: 2px; }
-.pad figcaption { padding: 14px 24px; border-top: 1px solid var(--rule); font-size: 14px; color: var(--soft); }
 
 /* steps */
 .steps { list-style: none; margin: 48px 0 0; padding: 0; display: grid; gap: 40px; }
 @media (min-width: 900px) { .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; } }
 .steps li { display: flex; flex-direction: column; gap: 14px; }
 .num { font-family: var(--keys); font-size: 14px; font-weight: 600; color: var(--red); }
-.visual { height: 56px; display: flex; align-items: center; gap: 8px; }
+/* the three pictures share one bottom edge */
+.visual { height: 56px; display: flex; align-items: flex-end; gap: 8px; }
 .visual kbd { font-size: 15px; padding: 8px 14px; border-width: 1.5px; border-radius: 8px; box-shadow: 0 3px 0 var(--ink); }
 .bars { gap: 5px; }
 .bars span { width: 6px; border-radius: 3px; background: var(--ink); }
 .bars span:last-child { background: var(--red); }
-.visual.said { font-size: 22px; font-weight: 500; }
+.visual.said { font-size: 22px; font-weight: 500; line-height: 1.2; }
 .steps h3 { font-size: 24px; margin-top: 4px; }
 
 /* features: a dark band either way */
@@ -131,18 +131,30 @@ kbd { font-size: 12px; padding: 4px 8px; border: 1px solid var(--ink); border-ra
 #download { background: var(--raised); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
 .dl-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 24px; }
 .dl-top h2 { font-size: clamp(40px, 5vw, 56px); font-weight: 800; }
+.dl-title { display: flex; align-items: center; gap: 16px; }
+.version { font-family: var(--keys); font-size: 13px; font-weight: 500; padding: 5px 12px; border: 1px solid var(--rule); border-radius: 999px; color: var(--soft); background: var(--paper); }
+.version[hidden] { display: none; }
 .tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 12px; background: var(--paper); border: 1px solid var(--rule); }
 .tabs button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
 .tabs button[aria-selected="true"] { background: var(--ink); color: var(--paper); }
 .panel { margin-top: 40px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
-@media (min-width: 900px) { .panel { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; } }
+/* side by side only where the one-line command still fits in half */
+@media (min-width: 1340px) { .panel { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; } }
 .panel[hidden] { display: none; }
 .box { min-width: 0; padding: 28px; border: 1px solid var(--rule); border-radius: 18px; display: flex; flex-direction: column; gap: 18px; }
 .box.first { background: var(--paper); }
 .box h3 { font-size: 26px; }
 .box .kicker { color: var(--red); font-weight: 600; }
 .cmd { display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 18px; background: var(--code); border-radius: 12px; }
-.cmd code { flex: 1; min-width: 0; color: var(--code-ink); font-size: 14px; overflow-x: auto; white-space: nowrap; padding: 8px 0; }
+.cmd code { flex: 1; min-width: 0; color: var(--code-ink); font-size: 13.5px; font-stretch: 87.5%; white-space: nowrap; padding: 8px 0; }
+/* a phone: Copy goes under the command, which takes the whole width */
+@media (max-width: 560px) {
+  .box { padding: 20px; }
+  .cmd { flex-direction: column; align-items: stretch; gap: 6px; padding: 8px 12px 12px; }
+  .cmd code { font-size: 11px; font-stretch: 75%; }
+}
+/* narrower than any common phone: better a wrap at the space than a scrollbar */
+@media (max-width: 380px) { .cmd code { white-space: normal; } }
 .cmd button { flex-shrink: 0; min-height: 44px; padding: 0 16px; border: 0; border-radius: 8px; background: var(--code-button); color: var(--code-ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
 .file { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 64px; padding: 10px 18px; border: 1px solid var(--ink); border-radius: 12px; color: var(--ink); text-decoration: none; }
 .file:hover { color: var(--ink); background: var(--paper); }
@@ -183,14 +195,13 @@ footer .brand svg { width: 26px; height: 26px; }
 <main id="top">
   <div class="wrap hero">
     <div>
-      <div class="kicker">Local dictation for Linux, macOS and Windows</div>
+      <div class="kicker">Available for Linux, macOS and Windows</div>
       <h1>Say it.<br>It's typed.</h1>
       <p class="lead soft">Hold a key, talk, let go. The text lands in whatever window you are in. Whisper runs on your own machine, and nothing leaves it unless you pick a cloud engine.</p>
       <div class="cta">
         <a class="button red" href="#download" id="cta"><svg aria-hidden="true"><use href="#down"/></svg><span>Download</span></a>
         <a class="others" href="#download" id="others">Every system, or build it yourself</a>
       </div>
-      <div class="kicker">Free · works offline</div>
     </div>
 
     <figure class="pad" aria-label="What you said, and what rookey typed">
@@ -209,7 +220,6 @@ footer .brand svg { width: 26px; height: 26px; }
           <p>Rename <span class="term">useSettingsStore</span><span class="caret"></span></p>
         </div>
       </div>
-      <figcaption>Filler words and false starts dropped, and the name read off your screen.</figcaption>
     </figure>
   </div>
 
@@ -249,7 +259,7 @@ footer .brand svg { width: 26px; height: 26px; }
         <div class="card">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3"/></svg>
           <h3>Runs on your machine</h3>
-          <p>whisper.cpp with large-v3-turbo, on CUDA, Metal or plain CPU. No account and no network.</p>
+          <p>Your voice turns into text on your own computer, faster with a graphics card. No account, no internet.</p>
         </div>
         <div class="card">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
@@ -264,12 +274,12 @@ footer .brand svg { width: 26px; height: 26px; }
         <div class="card">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
           <h3>Cleans up after you</h3>
-          <p>Filler words and false starts go. Write your own instruction for the rest, in any language.</p>
+          <p>Takes out the ums, false starts and background noise, and fixes the punctuation.</p>
         </div>
         <div class="card">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
           <h3>Binds its own hotkey</h3>
-          <p>Hold to talk on Linux and Windows. On niri and Hyprland it writes the bind, checks it with the compositor, and undoes it on any fault.</p>
+          <p>Hold to talk on Linux and Windows. On niri and Hyprland it sets the shortcut for you; on a Mac, Raycast or skhd can start it.</p>
         </div>
         <div class="card">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
@@ -285,7 +295,7 @@ footer .brand svg { width: 26px; height: 26px; }
       <div class="text">
         <h2>A command first, an app second.</h2>
         <p class="soft">Pipe it, bind it, script it. When you would rather click, <span class="mono" style="color:var(--ink)">rookey setup</span> opens a settings page for models, languages, keys and the hotkey, served from the binary itself.</p>
-        <a href="https://github.com/7KiLL/rookey#readme" style="font-weight:600">Read the docs</a>
+        <a href="https://github.com/7KiLL/rookey#readme" style="font-weight:600">Read the README</a>
       </div>
       <div class="shell">
         <span><span class="p">$ </span>rookey setup</span><span class="c"># first run: mic, then a model or a key</span>
@@ -302,8 +312,8 @@ footer .brand svg { width: 26px; height: 26px; }
     <div class="wrap">
       <div class="dl-top">
         <div>
-          <h2>Get rookey</h2>
-          <p class="soft" style="margin-top:12px">Nothing big is downloaded until you say so: <span class="mono">rookey setup</span> asks for a speech model, or an ElevenLabs key instead.</p>
+          <div class="dl-title"><h2>Get rookey</h2><span class="version" id="version" hidden></span></div>
+          <p class="soft" style="margin-top:12px; max-width:560px">Free and open source. The installer puts one binary on your PATH; <span class="mono">rookey setup</span> asks before it downloads a speech model.</p>
         </div>
         <div class="tabs" role="tablist" aria-label="Platform">
           <button role="tab" id="tab-linux" aria-controls="p-linux" aria-selected="true">Linux</button>
@@ -318,7 +328,7 @@ footer .brand svg { width: 26px; height: 26px; }
           <div class="kicker">Recommended</div>
           <h3>One line</h3>
           <div class="cmd"><code>curl -fsSL https://rookey.click/install | sh</code><button type="button" data-copy>Copy</button></div>
-          <p class="note">Picks the CUDA build when it finds an NVIDIA card and the CUDA 13 runtime, the CPU build otherwise, and puts <span class="mono">rookey</span> in <span class="mono">~/.local/bin</span>.</p>
+          <p class="note">Uses your NVIDIA card if you have one, the CPU otherwise. It asks before downloading a speech model.</p>
         </div>
         <div class="box">
           <h3>Or grab the binary</h3>
@@ -333,7 +343,7 @@ footer .brand svg { width: 26px; height: 26px; }
           <div class="kicker">Apple silicon</div>
           <h3>One line</h3>
           <div class="cmd"><code>curl -fsSL https://rookey.click/install | sh</code><button type="button" data-copy>Copy</button></div>
-          <p class="note">The Metal build. Bind <span class="mono">rookey toggle</span> with skhd, Raycast or Shortcuts, and give that app Accessibility access so it can paste.</p>
+          <p class="note">The Metal build for Apple silicon. Start it from Raycast or skhd, and give that app Accessibility access.</p>
         </div>
         <div class="box">
           <h3>Or grab the binary</h3>
@@ -347,7 +357,7 @@ footer .brand svg { width: 26px; height: 26px; }
           <div class="kicker">Windows 10 and 11</div>
           <h3>One line, in PowerShell</h3>
           <div class="cmd"><code>irm https://rookey.click/install.ps1 | iex</code><button type="button" data-copy>Copy</button></div>
-          <p class="note">Picks the CUDA build when it finds an NVIDIA card (the zip brings the CUDA runtime), the CPU build otherwise, and puts it on your PATH.</p>
+          <p class="note">Uses your NVIDIA card if you have one, the CPU otherwise. It asks before downloading a speech model.</p>
         </div>
         <div class="box">
           <h3>Or grab the binary</h3>
@@ -427,6 +437,17 @@ tabs.forEach((t, i) => {
   });
 });
 pick(document.getElementById(`tab-${os || "linux"}`));
+
+// the newest release's tag, so a new version shows without touching this page
+fetch("https://api.github.com/repos/7KiLL/rookey/releases/latest")
+  .then((r) => (r.ok ? r.json() : null))
+  .then((release) => {
+    if (!release?.tag_name) return;
+    const version = document.getElementById("version");
+    version.textContent = release.tag_name;
+    version.hidden = false;
+  })
+  .catch(() => {});
 
 for (const button of document.querySelectorAll("[data-copy]")) {
   button.addEventListener("click", async () => {
