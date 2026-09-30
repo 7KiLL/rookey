@@ -381,6 +381,59 @@ pub fn as_app(args: &[&str], wait: Option<Duration>) -> Res<String> {
     done
 }
 
+/// Runs this rookey command again as Rookey, through LaunchServices: `rookey ui` waits for it
+/// and shows what it prints in this terminal; `rookey toggle` from a hotkey app returns at once.
+/// The settings and PATH (tesseract is in Homebrew's folder) go along, as `open` passes none.
+pub fn relaunch(args: &[String], wait: bool) -> Res<()> {
+    let app = place_app(&crate::exe()?)?;
+    let mut open = Command::new("open");
+    open.args(["-n", "-g"]);
+    // no terminal (a script, a pipe): Rookey writes to a file, and this passes it on
+    let relay = (wait && tty().is_none()).then(|| env::temp_dir().join(format!("rookey-relay-{}", std::process::id())));
+    if wait {
+        open.arg("-W");
+        let out = tty().or_else(|| relay.clone()).unwrap();
+        open.arg("--stdout").arg(&out).arg("--stderr").arg(&out);
+    }
+    for (key, value) in env::vars() {
+        if key.starts_with("ROOKEY_") || key.starts_with("XDG_") || key == "PATH" {
+            open.arg("--env").arg(format!("{key}={value}"));
+        }
+    }
+    let mut child = open.arg(&app).arg("--args").args(args).stdin(Stdio::null()).spawn()?;
+    let mut passed = 0;
+    let status = loop {
+        if let Some(relay) = &relay {
+            if let Ok(text) = fs::read(relay) {
+                if text.len() > passed {
+                    let _ = std::io::Write::write_all(&mut std::io::stderr(), &text[passed..]);
+                    passed = text.len();
+                }
+            }
+        }
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    if let Some(relay) = relay {
+        let _ = fs::remove_file(relay);
+    }
+    if !status.success() {
+        return Err(format!("couldn't start Rookey ({}); ROOKEY_IN_TERMINAL=1 runs it here instead", app.display()).into());
+    }
+    Ok(())
+}
+
+/// This terminal, for Rookey to print into.
+fn tty() -> Option<PathBuf> {
+    unsafe extern "C" {
+        fn ttyname(fd: i32) -> *const c_char;
+    }
+    let name = unsafe { ttyname(2) };
+    (!name.is_null()).then(|| PathBuf::from(unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned()))
+}
+
 /// Where `as_app` wants the answer, when it asks.
 const ANSWER: &str = "ROOKEY_ANSWER";
 

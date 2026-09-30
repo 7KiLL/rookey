@@ -116,7 +116,8 @@ fn move_keys() {
 }
 
 pub fn run(open: bool, browser: bool) -> Res<()> {
-    // now, while the terminal that started this is sure to be among its parents
+    // now, while the terminal that started this is sure to be among its parents (Rookey needs
+    // no looking up)
     let _ = app();
     move_keys();
     models::clear_leftovers();
@@ -152,11 +153,8 @@ fn token() -> Res<String> {
 /// browser when that is missing, can't start, or `browser` asks for it.
 fn open_browser(url: &str, browser: bool) -> std::io::Result<()> {
     if !browser {
-        let exe = crate::exe()?;
         // Rookey is a copy on its own: its window is next to the rookey it came from
-        #[cfg(target_os = "macos")]
-        let exe = if crate::mac::is_app() { crate::mac::source().unwrap_or(exe) } else { exe };
-        let helper = exe.with_file_name(if cfg!(windows) { "rookey-window.exe" } else { "rookey-window" });
+        let helper = crate::installed()?.with_file_name(if cfg!(windows) { "rookey-window.exe" } else { "rookey-window" });
         let mut cmd = Command::new(&helper);
         cmd.arg(url).stdin(Stdio::null()).stdout(Stdio::null());
         if crate::verbosity() < 2 {
@@ -529,20 +527,14 @@ pub fn ask_here(args: &[String]) -> Res<()> {
 }
 
 /// macOS answers Accessibility once per process and keeps that answer, so a check again from
-/// the same process never turns green. A new process asks every time: a child, which answers
-/// for the terminal like this one, or Rookey itself once it listens for the hotkey.
+/// the same process never turns green. A child asks afresh every time, and answers for the
+/// same app as this process: Rookey, when the page runs as Rookey.
 #[cfg(target_os = "macos")]
 fn access() -> Access {
     use crate::mac;
-    let rookey = crate::listen::installed();
-    let printed = if rookey {
-        mac::as_app(&["__access"], Some(Duration::from_secs(5)))
-    } else {
-        crate::exe()
-            .and_then(|exe| Command::new(exe).arg("__access").stdin(Stdio::null()).stderr(Stdio::null()).output())
-            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
-            .map_err(Into::into)
-    };
+    let printed = crate::exe()
+        .and_then(|exe| Command::new(exe).arg("__access").stdin(Stdio::null()).stderr(Stdio::null()).output())
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
     let answer: Value = match printed.map(|p| serde_json::from_str(p.trim())) {
         Ok(Ok(answer)) => answer,
         _ => {
@@ -603,16 +595,11 @@ fn pane(what: &str, os: &str, on_path: &dyn Fn(&str) -> bool) -> Option<(&'stati
 fn open_pane(asked: &Value) -> Res<()> {
     let what = asked["what"].as_str().unwrap_or_default();
     let (program, args) = pane(what, env::consts::OS, &on_path).ok_or("There is no such settings page here.")?;
-    // Rookey asks for itself once it listens for the hotkey; the terminal asks here
     #[cfg(target_os = "macos")]
-    if crate::listen::installed() {
-        crate::mac::as_app(&["__ask", what], None)?;
-    } else {
-        match what {
-            "screen-privacy" => crate::mac::ask_screen(),
-            "accessibility" => crate::mac::ask_typing(),
-            _ => {}
-        }
+    match what {
+        "screen-privacy" => crate::mac::ask_screen(),
+        "accessibility" => crate::mac::ask_typing(),
+        _ => {}
     }
     let quiet = Stdio::null;
     Command::new(program).args(args).stdin(quiet()).stdout(quiet()).stderr(quiet()).spawn()?;
@@ -651,7 +638,7 @@ fn responsible_app(table: &str, mut pid: u32) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn app() -> Option<String> {
-    if crate::listen::installed() {
+    if crate::mac::is_app() {
         return Some("Rookey".into());
     }
     static APP: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
@@ -669,7 +656,7 @@ fn app() -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn rookey_app() -> bool {
-    crate::listen::installed()
+    crate::mac::is_app()
 }
 
 #[cfg(not(target_os = "macos"))]

@@ -193,7 +193,7 @@ fn managed_words(who: &str) -> &'static str {
 
 /// Where this rookey is, resolved, and who manages it if that is not rookey.
 fn here() -> Res<(PathBuf, Option<&'static str>)> {
-    let exe = crate::exe()?;
+    let exe = crate::installed()?;
     let exe = fs::canonicalize(&exe).unwrap_or(exe);
     let who = managed(&exe);
     Ok((exe, who))
@@ -343,7 +343,7 @@ pub fn run(args: &[String]) -> Res<()> {
         None => println!("rookey {} is the latest.", current()),
         Some((found, true)) => {
             println!("installed rookey {} at {}; it is used from the next start.", found.version, crate::ui::tilde(&exe));
-            match crate::listen::restart(&crate::exe()?) {
+            match crate::listen::restart(&crate::installed()?) {
                 Ok(true) => println!("restarted the hotkey listener on it."),
                 Ok(false) => {}
                 Err(e) => eprintln!("rookey: the hotkey listener picks it up on its next start ({e})"),

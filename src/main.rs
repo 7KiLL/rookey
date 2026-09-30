@@ -118,6 +118,18 @@ fn exe() -> std::io::Result<PathBuf> {
     Ok(on_disk(env::current_exe()?))
 }
 
+/// The rookey that was installed: this binary, or on macOS, when this is Rookey's copy, the one
+/// it was copied from. Updates and the settings window belong next to that one.
+fn installed() -> std::io::Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    if mac::is_app() {
+        if let Some(source) = mac::source() {
+            return Ok(source);
+        }
+    }
+    exe()
+}
+
 fn on_disk(exe: PathBuf) -> PathBuf {
     let name = exe.file_name().unwrap_or_default().to_string_lossy().into_owned();
     match name.strip_suffix(" (deleted)").map(str::to_string).or_else(|| Some(name.strip_suffix(".old.exe")?.to_string() + ".exe")) {
@@ -283,6 +295,12 @@ fn cli() -> Res<()> {
     #[cfg(target_os = "macos")]
     if args.is_empty() && mac::is_app() {
         ui = true;
+    }
+    // On macOS the page and the hotkey's recordings run as Rookey, so what they ask for is
+    // Rookey's, not the terminal's or the hotkey app's. A plain `rookey` stays in the terminal.
+    #[cfg(target_os = "macos")]
+    if (ui || toggle) && !mac::is_app() && env::var_os("ROOKEY_IN_TERMINAL").is_none() {
+        return mac::relaunch(&args, ui);
     }
     move_from_yap();
     #[cfg(windows)]
