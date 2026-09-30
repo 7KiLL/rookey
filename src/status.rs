@@ -131,16 +131,7 @@ pub fn waybar(now: &Value) -> Value {
 }
 
 /// `rookey status [--json | --waybar] [--follow]`
-pub fn run(args: &[String]) -> Res<()> {
-    let (mut json, mut waybar_out, mut follow) = (false, false, false);
-    for a in args {
-        match a.as_str() {
-            "--json" => json = true,
-            "--waybar" => waybar_out = true,
-            "--follow" | "-f" => follow = true,
-            _ => return Err(format!("status takes --json, --waybar and --follow, not {a}").into()),
-        }
-    }
+pub fn run(json: bool, waybar_out: bool, follow: bool) -> Res<()> {
     let line = |now: &Value| match () {
         _ if waybar_out => waybar(now).to_string(),
         _ if json => now.to_string(),

@@ -61,20 +61,16 @@ pub fn clear(path: &Path) -> io::Result<()> {
 }
 
 /// `rookey history` prints what is kept, newest last; `--clear` deletes it.
-pub fn run(args: &[String]) -> crate::Res<()> {
+pub fn run(clear_all: bool) -> crate::Res<()> {
     let path = path().ok_or("this system has no data directory")?;
-    match args {
-        [] => {
-            let mut out = io::stdout().lock(); // println! panics on a closed pipe
-            for e in read(&path) {
-                writeln!(out, "{}  {}", utc(e["at"].as_u64().unwrap_or(0)), e["text"].as_str().unwrap_or_default())?;
-            }
-        }
-        [flag] if flag == "--clear" => {
-            clear(&path)?;
-            eprintln!("rookey: history cleared ({})", path.display());
-        }
-        _ => return Err("usage: rookey history [--clear]".into()),
+    if clear_all {
+        clear(&path)?;
+        eprintln!("rookey: history cleared ({})", path.display());
+        return Ok(());
+    }
+    let mut out = io::stdout().lock(); // println! panics on a closed pipe
+    for e in read(&path) {
+        writeln!(out, "{}  {}", utc(e["at"].as_u64().unwrap_or(0)), e["text"].as_str().unwrap_or_default())?;
     }
     Ok(())
 }

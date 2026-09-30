@@ -1,10 +1,6 @@
 //! rookey: record the mic, transcribe locally with whisper.cpp, print or type the text.
 //!
-//!   rookey          record until Enter (or Ctrl-C), print transcript to stdout
-//!   rookey toggle   first call starts recording, second call stops it and types the text
-//!   rookey ui       settings in the browser (`rookey setup` too: what's missing comes first)
-//!   rookey history  the last transcripts, kept on this computer (`--clear` deletes them)
-//!   rookey update   installs a newer release (`--check` only says whether there is one)
+//! The commands and their help are in cli.rs; `rookey --help` lists them.
 //!
 //! Settings are env vars, or KEY=value lines in <config_dir>/rookey/config (the environment wins):
 //! ROOKEY_MODEL (ggml model path), ROOKEY_LANG (default "auto"), ROOKEY_BACKEND,
@@ -19,6 +15,7 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock, mpsc};
 use std::time::{Duration, Instant};
 use std::{env, fs, thread};
 
+use cli::Cmd;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SizedSample};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -46,6 +43,7 @@ macro_rules! vlog {
     };
 }
 
+mod cli;
 mod desktop;
 mod history;
 #[cfg(target_os = "macos")]
@@ -248,49 +246,33 @@ fn main() {
 }
 
 fn cli() -> Res<()> {
+    // as given, for Rookey to be started with (macOS)
+    #[cfg(target_os = "macos")]
+    let args: Vec<String> = env::args().skip(1).collect();
+    let cli = cli::parse();
+    VERBOSE.store(cli.verbose, std::sync::atomic::Ordering::Relaxed);
     let (mut toggle, mut ui, mut open, mut listen, mut overlay) = (false, false, true, false, false);
     let mut browser = false;
-    let args: Vec<String> = env::args().skip(1).collect();
-    for (i, arg) in args.iter().enumerate() {
-        match arg.as_str() {
-            // the rest of the line is status's own flags
-            "status" => return status::run(&args[i + 1..]),
-            "history" => return history::run(&args[i + 1..]),
-            "update" => return update::run(&args[i + 1..]),
-            "--version" | "-V" => {
-                println!("rookey {}", update::VERSION);
-                return Ok(());
-            }
-            // what the page asks of a fresh process, or of Rookey (see mac.rs)
-            #[cfg(target_os = "macos")]
-            "__access" => return ui::access_here(),
-            #[cfg(target_os = "macos")]
-            "__ask" => return ui::ask_here(&args[i + 1..]),
-            #[cfg(target_os = "macos")]
-            "__capture" => return listen::capture_here(&args[i + 1..]),
-            // `just install`: Rookey gets the new build, and its agent restarts on it
-            #[cfg(target_os = "macos")]
-            "__restart-listen" => return listen::restart(&exe()?).map(drop),
-            "overlay" => overlay = true,
-            "toggle" => toggle = true,
-            "ui" | "setup" => ui = true,
-            "listen" => listen = true,
-            "--no-open" => open = false, // just print the link, for a browser somewhere else
-            "--browser" => browser = true, // the browser, not rookey's own window
-            // -v, -vv, -vvv (or repeated -v) raise the level
-            v if v.len() > 1 && v.starts_with('-') && v[1..].chars().all(|c| c == 'v') => {
-                VERBOSE.fetch_add(v.len() as u8 - 1, std::sync::atomic::Ordering::Relaxed);
-            }
-            "--verbose" => {
-                VERBOSE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-            _ => {
-                eprintln!(
-                    "usage: rookey [-v|-vv|-vvv] [toggle | listen | setup | ui [--no-open|--browser] | status [--json|--waybar] [--follow] | overlay | history [--clear] | update [--check] | --version]"
-                );
-                std::process::exit(2);
-            }
-        }
+    match cli.command {
+        None => {}
+        Some(Cmd::Toggle) => toggle = true,
+        Some(Cmd::Listen) => listen = true,
+        Some(Cmd::Setup(page) | Cmd::Ui(page)) => (ui, open, browser) = (true, !page.no_open, page.browser),
+        Some(Cmd::Overlay) => overlay = true,
+        Some(Cmd::Status(s)) => return status::run(s.json, s.waybar, s.follow),
+        Some(Cmd::History { clear }) => return history::run(clear),
+        Some(Cmd::Update { check }) => return update::run(!check),
+        Some(Cmd::Skills { install }) => return cli::skill(install),
+        #[cfg(target_os = "macos")]
+        Some(Cmd::Access) => return ui::access_here(),
+        #[cfg(target_os = "macos")]
+        Some(Cmd::Ask { args }) => return ui::ask_here(&args),
+        #[cfg(target_os = "macos")]
+        Some(Cmd::Capture { args }) => return listen::capture_here(&args),
+        #[cfg(target_os = "macos")]
+        Some(Cmd::RestartListen) => return listen::restart(&exe()?).map(drop),
+        #[cfg(not(target_os = "macos"))]
+        Some(Cmd::Access | Cmd::Ask { .. } | Cmd::Capture { .. } | Cmd::RestartListen) => return Err("that one is for macOS".into()),
     }
     // Rookey opened by itself (a double-click, or macOS reopening it after a permission
     // changed) has nothing to record for: it shows the settings instead

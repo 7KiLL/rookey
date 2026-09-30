@@ -332,12 +332,7 @@ pub fn in_background(keep_going: bool) {
 }
 
 /// `rookey update [--check]`.
-pub fn run(args: &[String]) -> Res<()> {
-    let install = match args {
-        [] => true,
-        [flag] if flag == "--check" => false,
-        _ => return Err("usage: rookey update [--check]".into()),
-    };
+pub fn run(install: bool) -> Res<()> {
     let (exe, who) = here()?;
     match attempt(install)? {
         None => println!("rookey {} is the latest.", current()),

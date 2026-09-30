@@ -19,7 +19,8 @@ cargo test --release                                               # CPU
 
 | File | What it does |
 |---|---|
-| `src/main.rs` | CLI, settings (`setting()`), recording, backends (whisper, Scribe batch, Scribe realtime over WebSocket), typing, the move from the old `yap` dirs |
+| `src/main.rs` | Running the commands, settings (`setting()`), recording, backends (whisper, Scribe batch, Scribe realtime over WebSocket), typing, the move from the old `yap` dirs |
+| `src/cli.rs`, `src/skill.md` | The commands and their help (clap), the settings listed under `--help`, and `rookey skills`: how to work with rookey, for coding agents, baked into the binary. A test fails if it misses a command; update it with any command or setting people use |
 | `src/reader.rs` | Screen terms: screenshot, then local OCR (tesseract) or a vision model (OpenAI, Claude) |
 | `src/models.rs` | Whisper model catalog, finding installed models, downloads |
 | `src/desktop.rs` | Hotkeys: detects niri or Hyprland, edits their config safely, validates with the compositor itself |
