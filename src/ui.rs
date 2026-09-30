@@ -994,7 +994,8 @@ mod tests {
         assert!(changes(br#"{"ROOKEY_SOUND_START": "/no/such/caw.wav"}"#).is_err());
         assert!(changes(br#"{"ROOKEY_SOUND_START": "/tmp"}"#).is_err()); // a folder isn't a sound
         let here = env!("CARGO_MANIFEST_DIR").to_string() + "/Cargo.toml";
-        assert_eq!(changes(format!(r#"{{"ROOKEY_SOUND_STOP": "{here}"}}"#).as_bytes()).unwrap(), [change("ROOKEY_SOUND_STOP", &here)]);
+        let sent = json!({ "ROOKEY_SOUND_STOP": here }).to_string(); // escapes a Windows path's backslashes
+        assert_eq!(changes(sent.as_bytes()).unwrap(), [change("ROOKEY_SOUND_STOP", &here)]);
         assert_eq!(changes(br#"{"ROOKEY_NO_OVERLAY": "1"}"#).unwrap(), [change("ROOKEY_NO_OVERLAY", "1")]);
         assert!(changes(br#"{"ROOKEY_UI_LANG": "xx"}"#).is_err());
         assert_eq!(changes(br#"{"ROOKEY_UI_THEME": "dark"}"#).unwrap(), [change("ROOKEY_UI_THEME", "dark")]);
