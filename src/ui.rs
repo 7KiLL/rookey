@@ -14,10 +14,10 @@ use std::{env, fs, thread};
 
 use serde_json::{Map, Value, json};
 
-use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader, sound};
+use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader, sound, update};
 
 /// The settings the page may change. Keys are not among them, they have a file of their own.
-const SETTINGS: [&str; 22] = [
+const SETTINGS: [&str; 23] = [
     "ROOKEY_BACKEND",
     "ROOKEY_LANG",
     "ROOKEY_MODEL",
@@ -38,6 +38,7 @@ const SETTINGS: [&str; 22] = [
     "ROOKEY_HISTORY", // 0 keeps no history, empty keeps it
     "ROOKEY_WORDS", // your own names and jargon, comma-separated
     "ROOKEY_KEEP_CLIPBOARD", // macOS: puts the clipboard back after a paste; on unless 0
+    "ROOKEY_AUTOUPDATE", // installs new releases by itself; on unless 0, which only checks
     // the settings page's own look; empty follows the system and the browser
     "ROOKEY_UI_THEME",
     "ROOKEY_UI_LANG",
@@ -122,6 +123,7 @@ pub fn run(open: bool) -> Res<()> {
     let url = format!("http://{}/?t={token}", listener.local_addr()?);
     eprintln!("rookey ui: {url}");
     eprintln!("stops when you close the page, or with Ctrl-C");
+    crate::update::in_background(false);
     if open {
         if let Err(e) = open_browser(&url) {
             eprintln!("rookey ui: couldn't open a browser ({e}), open the link above");
@@ -216,7 +218,8 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
         ("GET", "/api/state") => Ok(state_after_listening()),
         // what changes by itself, asked for often while it does
         ("GET", "/api/history") => Ok(history()),
-        ("GET", "/api/progress") => Ok(json!({ "download": models::download_state(), "trial": trial() })),
+        ("GET", "/api/progress") => Ok(json!({ "download": models::download_state(), "trial": trial(), "update": update::state() })),
+        ("GET", "/api/update") => Ok(update::state()),
         ("POST", "/api/save") => match changes(&req.body) {
             Ok(changes) => config_path()
                 .ok_or_else(|| "This system has no place for a settings file.".into())
@@ -231,6 +234,9 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
                 "/api/hotkey" => hotkey(&asked),
                 "/api/try" => try_it(&asked).map(|()| json!({ "trial": trial() })),
                 "/api/sound" => play(&asked).map(|()| json!({})),
+                "/api/update" if asked["check"] == true || asked["install"] == true => {
+                    update::start(asked["install"] == true).map(|()| update::state())
+                }
                 "/api/history" if asked["clear"] == true => crate::history::path()
                     .map_or(Ok(()), |p| crate::history::clear(&p))
                     .map_err(|e| format!("Can't clear the history: {e}").into())
@@ -423,6 +429,7 @@ fn state() -> Value {
         "hotkey": desktop::hotkey(),
         "listen": listening(&get),
         "trial": trial(),
+        "update": update::state(),
         "os": env::consts::OS,
     })
 }
@@ -541,7 +548,7 @@ fn install(tool: &str) -> Option<String> {
 }
 
 /// A path the way people write it, with ~ for the home directory.
-fn tilde(path: &Path) -> String {
+pub fn tilde(path: &Path) -> String {
     match dirs::home_dir().and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf)) {
         Some(rest) => Path::new("~").join(rest).display().to_string(),
         None => path.display().to_string(),
@@ -652,7 +659,7 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
                 }
                 value = words.join(",");
             }
-            "ROOKEY_KEEP_CLIPBOARD" if !matches!(value.as_str(), "" | "0" | "1") => {
+            "ROOKEY_KEEP_CLIPBOARD" | "ROOKEY_AUTOUPDATE" if !matches!(value.as_str(), "" | "0" | "1") => {
                 return Err(format!("{key} is on by default, 0 turns it off.").into());
             }
             // rookey opens this path as it is, and only a shell knows what ~ means
@@ -960,6 +967,9 @@ mod tests {
         assert!(words(&(0..100).map(|n| format!("w{n}")).collect::<Vec<_>>().join(",")).is_ok());
         assert_eq!(changes(br#"{"ROOKEY_KEEP_CLIPBOARD": "0"}"#).unwrap(), [change("ROOKEY_KEEP_CLIPBOARD", "0")]);
         assert!(changes(br#"{"ROOKEY_KEEP_CLIPBOARD": "yes"}"#).is_err());
+        assert_eq!(changes(br#"{"ROOKEY_AUTOUPDATE": "0"}"#).unwrap(), [change("ROOKEY_AUTOUPDATE", "0")]);
+        assert_eq!(changes(br#"{"ROOKEY_AUTOUPDATE": ""}"#).unwrap(), [change("ROOKEY_AUTOUPDATE", "")]);
+        assert!(changes(br#"{"ROOKEY_AUTOUPDATE": "weekly"}"#).is_err());
     }
 
     #[test]

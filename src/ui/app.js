@@ -238,8 +238,34 @@ function Header() {
           </select>
         </label>
       </div>
-      ${() => (ui.ready ? html`${shell("ROOKEY_UI_THEME")}${shell("ROOKEY_UI_LANG")}` : "")}
+      ${() => (ui.ready ? html`${shell("ROOKEY_UI_THEME")}${shell("ROOKEY_UI_LANG")}${Version()}` : "")}
     </header>`;
+}
+
+/** Which rookey this is, and whether a newer one is out, on its way, or waiting for a restart. */
+function Version() {
+  const ask = async (what) => {
+    try {
+      merge(ui.s.update, await call("/api/update", { [what]: true }));
+      watch();
+    } catch (e) {
+      say("status.failed", { why: e.message }, true);
+    }
+  };
+  const button = (key, what) => html`<button type="button" class="button is-quiet" @click="${() => ask(what)}">${t(key)}</button>`;
+  const line = () => {
+    const { phase, latest, managed, supported, error } = ui.s.update;
+    if (!supported) return t("update.unsupported");
+    if (phase === "checking") return t("update.checking");
+    if (phase === "current") return html`${t("update.current")} · ${button("update.check", "check")}`;
+    if (phase === "downloading") return t("update.downloading", { version: latest });
+    if (phase === "installed") return t(ui.s.listen.running ? "update.installed.listen" : "update.installed", { version: latest });
+    if (phase === "available" && managed) return t("update.managed", { version: latest, who: t(`update.by.${managed}`) });
+    if (phase === "available") return html`${t("update.available", { version: latest })} · ${button("update.install", "install")}`;
+    if (phase === "failed") return html`<span class="problem-text">${t("update.failed", { why: error })}</span> · ${button("update.again", "check")}`;
+    return button("update.check", "check");
+  };
+  return html`<p class="version" aria-live="polite"><span>${() => t("update.version", { version: ui.s.update.version })}</span> · ${line}</p>`;
 }
 
 function Settings() {
@@ -605,6 +631,13 @@ function Advanced() {
         <h3 id="providers-title">${t("keys.title")}</h3>
         <p class="about">${t("keys.about")}</p>
         <ul class="rows" aria-labelledby="providers-title">${() => ui.s.providers.map((p) => ProviderRow(p, "keys"))}</ul>
+      </div>
+
+      <div class="sub" id="updates-field">
+        <h3>${t("updates.title")}</h3>
+        ${toggle("autoupdate", t("updates.auto"), t("updates.auto.about"), () => values().ROOKEY_AUTOUPDATE !== "0", (e) =>
+          save({ ROOKEY_AUTOUPDATE: e.target.checked ? "" : "0" }))}
+        ${shell("ROOKEY_AUTOUPDATE")}
       </div>
 
       <div class="sub">
@@ -1088,9 +1121,10 @@ function Trial() {
 
 // ---- moving parts ----------------------------------------------------------
 
-// While a download or a test runs, ask how it is going.
+// While a download, a test or an update runs, ask how it is going.
 let watching = false;
-const moving = () => Boolean(ui.s.models.download?.running) || ["listening", "working"].includes(ui.s.trial.phase);
+const moving = () =>
+  Boolean(ui.s.models.download?.running) || ["listening", "working"].includes(ui.s.trial.phase) || ["checking", "downloading"].includes(ui.s.update.phase);
 
 async function watch() {
   if (watching || ui.stopped || !moving()) return;
@@ -1107,6 +1141,7 @@ async function watch() {
     const wasTrying = ui.s.trial.phase;
     merge(ui.s.models, { download: progress.download }, false);
     merge(ui.s.trial, progress.trial);
+    merge(ui.s.update, progress.update);
     if (wasTrying !== progress.trial.phase && progress.trial.phase === "done") say("trial.s.done");
     if (wasTrying !== progress.trial.phase && progress.trial.phase === "failed") say("trial.s.failed", {}, true);
     if (wasDownloading && !progress.download) {

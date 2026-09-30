@@ -359,7 +359,7 @@ fn strip_colors(text: &str) -> String {
 
 /// This binary, by a path that doesn't lean on the compositor's PATH.
 fn program() -> Res<String> {
-    let exe = env::current_exe()?;
+    let exe = crate::exe()?;
     let path = match dirs::home_dir().and_then(|home| exe.strip_prefix(home).ok().map(Path::to_path_buf)) {
         Some(rest) => format!("~/{}", rest.display()),
         None => exe.display().to_string(),

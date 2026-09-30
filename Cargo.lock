@@ -1151,6 +1151,7 @@ dependencies = [
  "fontdue",
  "getrandom 0.4.3",
  "percent-encoding",
+ "ring",
  "serde_json",
  "smithay-client-toolkit",
  "tungstenite",

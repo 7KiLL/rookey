@@ -50,9 +50,14 @@ rookey toggle     # 1st call: start recording. 2nd call: stop, transcribe, type 
 rookey listen     # Linux, Windows: hold ROOKEY_HOTKEY to talk, let go to stop (a tap keeps it going)
 rookey ui         # settings page in the browser (--no-open just prints the link); `rookey setup` is the same page
 rookey history    # the last transcripts, oldest first (--clear deletes them)
+rookey update     # installs a newer release (--check only says whether there is one)
 ```
 
 Every transcript is kept before it is typed, so text that went into the wrong window, or wasn't typed at all, can be copied again: the last 500, as JSON lines in `~/.local/share/rookey/history`, readable only by you and never uploaded. `rookey ui` lists them with a Copy button each. `ROOKEY_HISTORY=0` keeps none. Tests on the settings page aren't kept.
+
+### Updates
+
+Installed with the scripts above, rookey keeps itself up to date. When `rookey ui` or `rookey listen` starts, and once a day while `rookey listen` runs, it asks GitHub whether a new release is out; that is the only network call it makes without being asked. A newer one is downloaded in the background, checked against the release's `SHA256SUMS`, run once with `--version`, and put in place of the old binary. What runs keeps the old one, so the new one is used from the next start. `ROOKEY_AUTOUPDATE=0` only checks and tells you, on the settings page and with `rookey update --check`. A rookey from a package manager, Homebrew, Nix, cargo or a system folder like `/usr` or Program Files is left alone: update it where it came from.
 
 ## Settings
 
@@ -96,6 +101,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 | `ROOKEY_READER_MODEL` | the vision model, if not `gpt-6-luna` or `claude-opus-5-5` |
 | `ROOKEY_SCREENSHOT=<command>` | a command that prints the image, instead of `grim` |
 | `ROOKEY_KEEP_CLIPBOARD=0` | macOS types by pasting; by default the clipboard's text is put back 300 ms after. `0` leaves the typed text on it |
+| `ROOKEY_AUTOUPDATE=0` | only check for a new release and say so, don't install it by itself ([Updates](#updates)) |
 
 ### Screen terms
 
