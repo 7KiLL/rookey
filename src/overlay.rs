@@ -147,6 +147,9 @@ pub struct Pill {
     at: u64,           // when this state began, for the clock and the transcribing dots
     pushed: u64,
     polled: u64,
+    /// Where in its surface the pill sits, 0 left to 1 right: the way the surface sits on the
+    /// screen, so a pill in a corner is in the corner, and grows away from its edge.
+    lean: f32,
 }
 
 impl Pill {
@@ -154,7 +157,8 @@ impl Pill {
         let raw = status::read().unwrap_or(Value::Null);
         let style = crate::setting("ROOKEY_PILL");
         let style = STYLES.into_iter().find(|&s| style.as_deref() == Some(s)).unwrap_or(STYLES[0]);
-        Pill { style, raw, shown: Value::Null, history: [0.0; 7], bars: [0.0; 7], at: 0, pushed: 0, polled: 0 }
+        let lean = (at().0 / 100.0) as f32;
+        Pill { style, raw, shown: Value::Null, history: [0.0; 7], bars: [0.0; 7], at: 0, pushed: 0, polled: 0, lean }
     }
 
     /// Reads the status now and then and moves the animation. `false` once there is nothing
@@ -199,12 +203,14 @@ impl Pill {
         // a failure is always the whole pill: the reason is the point
         if self.style == "dot" && state != "failed" {
             let r = H as f32 / 2.0;
-            let x = W as f32 / 2.0;
             let (color, size) = match state {
                 "listening" => (RED, 6.0 + 2.0 * self.bars[6].sqrt().min(1.0)),
                 "transcribing" => (INK, 6.0),
                 _ => return, // typed: the words on screen say it
             };
+            // by its widest, so it stays put while it swells, and a corner dot is in the corner
+            let outer = 8.0 + 3.0;
+            let x = outer + (W as f32 - 2.0 * outer) * self.lean;
             c.capsule((x, r), (x, r), size + 3.0, PAPER, 1.0);
             c.capsule((x, r), (x, r), size, color, 1.0);
             return;
@@ -230,7 +236,7 @@ impl Pill {
         let fixed = content.iter().filter(|p| !p.is_text()).map(|p| p.width(0.0)).sum::<f32>() + gaps;
         let widths: Vec<f32> = content.iter().map(|p| p.width(room - fixed)).collect();
         let pill_w = pad_l + widths.iter().sum::<f32>() + gaps + pad_r;
-        let x0 = (W as f32 - pill_w) / 2.0;
+        let x0 = (W as f32 - pill_w) * self.lean;
         let r = H as f32 / 2.0;
         // a hairline of paper around the ink, so it reads on a dark wallpaper too
         c.capsule((x0 + r, r), (x0 + pill_w - r, r), r, PAPER, 0.18);
@@ -615,6 +621,28 @@ mod wayland {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pill_in_a_corner_is_in_the_corner() {
+        // the first and last columns with anything drawn, at 1x
+        let drawn = |lean: f32, style: &'static str| {
+            let mut pill = Pill::new();
+            pill.shown = serde_json::json!({"state": "listening", "level": 0.5});
+            (pill.style, pill.lean) = (style, lean);
+            let mut px = vec![0u8; (W * H * 4) as usize];
+            pill.draw(&mut px, 1, 0);
+            let lit: Vec<u32> = (0..W).filter(|&x| (0..H).any(|y| px[((y * W + x) * 4 + 3) as usize] > 0)).collect();
+            (*lit.first().unwrap(), *lit.last().unwrap())
+        };
+        for style in STYLES {
+            let (left, _) = drawn(0.0, style);
+            let (_, right) = drawn(1.0, style);
+            let (l, r) = drawn(0.5, style);
+            // the dot keeps room to swell into, a few pixels at its quietest
+            assert!(left <= 3 && right >= W - 4, "{style}: {left}..{right}");
+            assert!(l.abs_diff(W - 1 - r) <= 2, "{style} centred: {l}..{r}");
+        }
+    }
 
     #[test]
     fn where_the_pill_goes() {
