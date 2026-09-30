@@ -383,11 +383,6 @@ pub fn restart(exe: &std::path::Path) -> Res<bool> {
     Ok(true)
 }
 
-/// Whether the agent is installed: then Rookey, not the terminal, is the app that records.
-pub fn installed() -> bool {
-    plist_path().is_some_and(|p| p.is_file())
-}
-
 pub fn running() -> bool {
     launchctl(&["print", &format!("{}/{LABEL}", domain())]).is_ok_and(|info| info.contains("state = running"))
 }

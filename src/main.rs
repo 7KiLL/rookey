@@ -988,10 +988,21 @@ where
                 frame.iter().map(|&s| f32::from_sample(s)).sum::<f32>() / channels as f32
             }));
         },
-        |e| eprintln!("audio error: {e}"),
+        audio_error,
         None,
     )?;
     Ok(stream)
+}
+
+/// What the sound system reports while a stream runs. A glitch (an under- or overrun, which
+/// macOS reports as a stream starts or stops) loses a few samples at most: not worth a word
+/// unless asked for.
+fn audio_error(e: cpal::Error) {
+    if e.kind() == cpal::ErrorKind::Xrun {
+        vlog!(2, "audio: {e}");
+    } else {
+        eprintln!("audio error: {e}");
+    }
 }
 
 /// Linear-interpolation resampler.

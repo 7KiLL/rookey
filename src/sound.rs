@@ -123,7 +123,7 @@ fn out<T: SizedSample + FromSample<f32>>(
                 frame.fill(s);
             }
         },
-        |e| eprintln!("audio error: {e}"),
+        crate::audio_error,
         None,
     )?;
     Ok(stream)
