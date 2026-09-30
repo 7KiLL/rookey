@@ -330,7 +330,17 @@ function checkWords(c) {
   let missing = tx(words, { engine, app });
   if (c.id === "mic" && c.title.includes(": ")) title = t("check.mic.named", { name: c.title.split(": ").slice(1).join(": ") });
   // which tools, as the server found them with the environment winning over the config
-  if (c.id === "screen") missing = tx("check.screen.missing", { tools: listOf(c.tools || []) });
+  if (c.id === "screen") {
+    const tools = c.tools || [], langs = c.langs || [];
+    missing = [];
+    if (tools.length) missing.push(...tx("check.screen.missing", { tools: listOf(tools) }));
+    if (langs.length) {
+      // languages whose tesseract pack isn't installed: their text comes out as junk
+      if (tools.length) missing.push(" ");
+      missing.push(t("check.screen.langs", { langs: listOf(langs.map((l) => languageName(l))) }));
+      if (ui.s.os === "windows") missing.push(" ", t("check.screen.langs.windows"));
+    }
+  }
   // the default model is here, so the one the settings name is somewhere else
   if (c.id === "model" && ui.s.models.catalog[0].installed) missing = tx("check.model.elsewhere", { engine });
   return { title, missing };
