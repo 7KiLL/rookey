@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader, sound};
 
 /// The settings the page may change. Keys are not among them, they have a file of their own.
-const SETTINGS: [&str; 20] = [
+const SETTINGS: [&str; 21] = [
     "ROOKEY_BACKEND",
     "ROOKEY_LANG",
     "ROOKEY_MODEL",
@@ -36,6 +36,7 @@ const SETTINGS: [&str; 20] = [
     "ROOKEY_NO_OVERLAY",
     "ROOKEY_PILL", // its look: full, compact or dot
     "ROOKEY_WORDS", // your own names and jargon, comma-separated
+    "ROOKEY_KEEP_CLIPBOARD", // macOS: puts the clipboard back after a paste; on unless 0
     // the settings page's own look; empty follows the system and the browser
     "ROOKEY_UI_THEME",
     "ROOKEY_UI_LANG",
@@ -408,6 +409,7 @@ fn state() -> Value {
         "hotkey": desktop::hotkey(),
         "listen": listening(&get),
         "trial": trial(),
+        "os": env::consts::OS,
     })
 }
 
@@ -632,6 +634,9 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
                     return Err(format!("That's {} words, rookey takes {MAX_WORDS}.", words.len()).into());
                 }
                 value = words.join(",");
+            }
+            "ROOKEY_KEEP_CLIPBOARD" if !matches!(value.as_str(), "" | "0" | "1") => {
+                return Err(format!("{key} is on by default, 0 turns it off.").into());
             }
             // rookey opens this path as it is, and only a shell knows what ~ means
             "ROOKEY_MODEL" if value.starts_with("~/") => {
@@ -927,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn words_are_checked() {
+    fn words_and_clipboard_are_checked() {
         let words = |v: &str| changes(format!(r#"{{"ROOKEY_WORDS": {}}}"#, serde_json::to_string(v).unwrap()).as_bytes());
         assert_eq!(words(" rookey, Kyiv\nOblast ,,rookey").unwrap(), [change("ROOKEY_WORDS", "rookey,Kyiv Oblast")]);
         assert_eq!(words("").unwrap(), [change("ROOKEY_WORDS", "")]);
@@ -936,6 +941,8 @@ mod tests {
         assert!(words("a[b]").is_err());
         assert!(words(&(0..101).map(|n| format!("w{n}")).collect::<Vec<_>>().join(",")).is_err());
         assert!(words(&(0..100).map(|n| format!("w{n}")).collect::<Vec<_>>().join(",")).is_ok());
+        assert_eq!(changes(br#"{"ROOKEY_KEEP_CLIPBOARD": "0"}"#).unwrap(), [change("ROOKEY_KEEP_CLIPBOARD", "0")]);
+        assert!(changes(br#"{"ROOKEY_KEEP_CLIPBOARD": "yes"}"#).is_err());
     }
 
     #[test]

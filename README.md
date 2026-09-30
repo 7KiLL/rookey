@@ -92,6 +92,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 | `ROOKEY_READER` | who reads the screenshot: `ocr` (default, tesseract on this machine), `openai`, `anthropic` |
 | `ROOKEY_READER_MODEL` | the vision model, if not `gpt-6-luna` or `claude-opus-5-5` |
 | `ROOKEY_SCREENSHOT=<command>` | a command that prints the image, instead of `grim` |
+| `ROOKEY_KEEP_CLIPBOARD=0` | macOS types by pasting; by default the clipboard's text is put back 300 ms after. `0` leaves the typed text on it |
 
 ### Screen terms
 

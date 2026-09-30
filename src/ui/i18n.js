@@ -117,6 +117,9 @@ const en = {
   "words.remove": "Remove {word}",
   "words.local": "Whisper on this machine gets them as a hint. Nothing leaves your computer.",
   "words.cloud": "They go to ElevenLabs with every recording, as key terms billed on top of the transcription. Streaming takes the first 50, up to 20 characters each.",
+  "clipboard.title": "Clipboard",
+  "clipboard": "Put my clipboard back",
+  "clipboard.about": "On macOS rookey types by pasting. With this on, what you had copied comes back a moment later. Text only: a copied image or file is replaced.",
 
   "hotkey.title": "Hotkey",
   "hotkey.about": "Starts a recording, and when it stops, types the text into the window you are in.",
@@ -392,6 +395,9 @@ const uk = {
   "words.remove": "Прибрати {word}",
   "words.local": "Whisper на цьому комп’ютері отримує їх як підказку. Нічого не покидає ваш комп’ютер.",
   "words.cloud": "Вони йдуть до ElevenLabs із кожним записом як ключові терміни, за які платите окремо від розпізнавання. Потоковий режим бере перші 50, до 20 символів кожне.",
+  "clipboard.title": "Буфер обміну",
+  "clipboard": "Повертати мій буфер обміну",
+  "clipboard.about": "На macOS rookey друкує, вставляючи текст. Коли це ввімкнено, скопійоване вами повертається за мить. Лише текст: скопійоване зображення чи файл буде замінено.",
 
   "hotkey.title": "Гаряча клавіша",
   "hotkey.about": "Починає запис, а коли він зупиняється, набирає текст у вікні, де ви зараз.",

@@ -989,6 +989,14 @@ fn transcribe(ctx: &WhisperContext, audio: &[f32], terms: &[String]) -> Res<Stri
     Ok(text.trim().to_string())
 }
 
+/// ROOKEY_KEEP_CLIPBOARD: on unless it is 0 or false, so typing on macOS puts your clipboard back.
+#[cfg(target_os = "macos")]
+fn keep_clipboard() -> bool {
+    let key = "ROOKEY_KEEP_CLIPBOARD";
+    let raw = env::var(key).ok().or_else(|| CONFIG.read().unwrap().get(key).cloned());
+    !matches!(raw.as_deref(), Some("0" | "false"))
+}
+
 /// Types text into the focused window.
 fn type_text(text: &str) -> Res<()> {
     if text.is_empty() {
@@ -996,13 +1004,30 @@ fn type_text(text: &str) -> Res<()> {
     }
     #[cfg(target_os = "macos")]
     {
-        // ponytail: paste via clipboard (keystroke mangles non-ASCII); clobbers the clipboard.
-        let mut pb = Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn()?;
-        pb.stdin.take().unwrap().write_all(text.as_bytes())?;
-        pb.wait()?;
+        // ponytail: paste via clipboard (keystroke mangles non-ASCII). Only text is put back:
+        // pbpaste can't read an image or files, those are lost; NSPasteboard would keep them.
+        let saved = keep_clipboard()
+            .then(|| Command::new("pbpaste").output().ok())
+            .flatten()
+            .filter(|o| o.status.success() && !o.stdout.is_empty())
+            .map(|o| o.stdout);
+        let copy = |bytes: &[u8]| -> Res<()> {
+            let mut pb = Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn()?;
+            pb.stdin.take().unwrap().write_all(bytes)?;
+            pb.wait()?;
+            Ok(())
+        };
+        copy(text.as_bytes())?;
         Command::new("osascript")
             .args(["-e", r#"tell application "System Events" to keystroke "v" using command down"#])
             .status()?;
+        if let Some(saved) = saved {
+            // ponytail: the app reads the paste after the keystroke returns, on its own time;
+            // 300 ms covers the usual ones, a slow one pastes the old clipboard. Way up: wait
+            // on NSPasteboard's changeCount, or a clipboard manager's own API.
+            thread::sleep(Duration::from_millis(300));
+            copy(&saved)?;
+        }
     }
     #[cfg(windows)]
     win::type_text(text)?;

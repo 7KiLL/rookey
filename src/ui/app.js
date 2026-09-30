@@ -598,6 +598,8 @@ function Advanced() {
 
       ${Sounds()}
 
+      ${() => (ui.s.os === "macos" ? Clipboard() : "")}
+
       <div class="sub" id="providers">
         <h3 id="providers-title">${t("keys.title")}</h3>
         <p class="about">${t("keys.about")}</p>
@@ -648,6 +650,17 @@ function Sounds() {
       </ul>
       <p class="hint">${t("sounds.files")}</p>
       ${shell("ROOKEY_SOUNDS")}
+    </div>`;
+}
+
+/** macOS types by pasting: whether the clipboard is put back afterwards. On unless 0. */
+function Clipboard() {
+  return html`
+    <div class="sub" id="clipboard-field">
+      <h3>${t("clipboard.title")}</h3>
+      ${toggle("keep-clipboard", t("clipboard"), t("clipboard.about"), () => values().ROOKEY_KEEP_CLIPBOARD !== "0", (e) =>
+        save({ ROOKEY_KEEP_CLIPBOARD: e.target.checked ? "" : "0" }))}
+      ${shell("ROOKEY_KEEP_CLIPBOARD")}
     </div>`;
 }
 
