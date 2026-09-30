@@ -152,7 +152,55 @@ On Windows it reads the keys' state instead, so it needs no rights of its own, a
 
 **Your desktop runs it.** Bind `rookey toggle` in the compositor or anything else that runs a command. One press starts, the next one stops.
 
-A sound plays as the recording starts and another as it stops, from the freedesktop sound theme (Windows: its own Speech On and Off sounds, and no notes on screen). `ROOKEY_QUIET=1` turns them off, and `ROOKEY_NO_NOTIFICATIONS=1` the notes on screen.
+A sound plays as rookey starts listening, stops, types and fails. There are three sets, made from tones and noise as they play, so nothing is shipped or licensed: `ROOKEY_SOUNDS=rook` (the default: a small caw, beak clacks, a keycap knock), `notes` (soft sine tones) and `pencil` (short taps of noise). Any cue can be your own file instead: `ROOKEY_SOUND_START`, `ROOKEY_SOUND_STOP`, `ROOKEY_SOUND_TYPED`, `ROOKEY_SOUND_FAILED`, each a path, played through `pw-play` or `paplay` (`afplay` on macOS; WAV only on Windows). `rookey ui` has all of it under Advanced, with a Play button for each. `ROOKEY_QUIET=1` turns the sounds off.
+
+A small pill sits at the bottom of the screen while it listens (a level meter and the seconds so far), transcribes and types, and turns red with the reason if something failed. It's `rookey overlay`, a layer-shell surface on Wayland (niri, Hyprland, sway, KDE) and a layered window on Windows. It never takes a click or the focus, and it quits once rookey is idle. `ROOKEY_NO_OVERLAY=1` turns it off. Where it can't show (macOS, X11, GNOME), or with it off, a desktop notification says the same; `ROOKEY_NO_NOTIFICATIONS=1` turns those off too.
+
+## Status for bars
+
+`rookey status` says what rookey is doing now, and `--follow` prints a new line on every change, so a bar never polls:
+
+```sh
+$ rookey status
+listening 0:04
+$ rookey status --json --follow
+{"state":"idle"}
+{"level":0.41,"seconds":0,"state":"listening"}
+{"state":"transcribing"}
+{"state":"typed","waited_ms":310,"words":12}
+{"state":"idle"}
+```
+
+The states are `idle`, `listening` (with `seconds` and the mic's peak `level`, 0 to 1), `transcribing`, `typed` (shown for a second, with `words` and `waited_ms`, the wait after you stopped), and `failed` (with `reason`, kept until the next recording). Any recording writes it, from a hotkey or a terminal. It's one JSON file, `$XDG_RUNTIME_DIR/rookey.status`, if you'd rather watch that.
+
+Waybar: `--waybar` prints its format, with the state as `alt` and `class`.
+
+```jsonc
+"custom/rookey": {
+  "exec": "rookey status --follow --waybar",
+  "return-type": "json",
+  "format": "{icon} {text}",
+  "format-icons": { "idle": "", "listening": "●", "transcribing": "…", "typed": "✓", "failed": "!" },
+  "on-click": "rookey toggle"
+}
+```
+```css
+#custom-rookey.listening { color: #e5584c; }
+#custom-rookey.failed { color: #f0645a; }
+```
+
+Quickshell reads the same lines:
+
+```qml
+import Quickshell.Io
+
+Process {
+  command: ["rookey", "status", "--json", "--follow"]
+  running: true
+  stdout: SplitParser { onRead: line => root.rookey = JSON.parse(line) }
+}
+// root.rookey.state, .seconds, .level, .words, .reason
+```
 
 `rookey ui` sets the compositor bind where it can. Every change is checked by the compositor's own validator (`niri validate`, `Hyprland --verify-config`) and undone if that finds a fault. Keys that something else is bound to are reported first, with the line that binds them.
 

@@ -14,10 +14,10 @@ use std::{env, fs, thread};
 
 use serde_json::{Map, Value, json};
 
-use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader};
+use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader, sound};
 
 /// The settings the page may change. Keys are not among them, they have a file of their own.
-const SETTINGS: [&str; 12] = [
+const SETTINGS: [&str; 18] = [
     "ROOKEY_BACKEND",
     "ROOKEY_LANG",
     "ROOKEY_MODEL",
@@ -26,7 +26,14 @@ const SETTINGS: [&str; 12] = [
     "ROOKEY_CONTEXT",
     "ROOKEY_READER",
     "ROOKEY_QUIET",
+    "ROOKEY_SOUNDS",
+    // a file of your own in place of a cue
+    "ROOKEY_SOUND_START",
+    "ROOKEY_SOUND_STOP",
+    "ROOKEY_SOUND_TYPED",
+    "ROOKEY_SOUND_FAILED",
     "ROOKEY_NO_NOTIFICATIONS",
+    "ROOKEY_NO_OVERLAY",
     // the settings page's own look; empty follows the system and the browser
     "ROOKEY_UI_THEME",
     "ROOKEY_UI_LANG",
@@ -214,6 +221,7 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
                 "/api/model" => model(&asked).map(|()| state()),
                 "/api/hotkey" => hotkey(&asked),
                 "/api/try" => try_it(&asked).map(|()| json!({ "trial": trial() })),
+                "/api/sound" => play(&asked).map(|()| json!({})),
                 _ => return error(stream, "404 Not Found", "No such thing here."),
             },
             Err(e) => return error(stream, "400 Bad Request", &e.to_string()),
@@ -225,6 +233,17 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
         // asked for properly, and it didn't work out: the message says why
         Err(e) => error(stream, "422 Unprocessable Content", &e.to_string()),
     }
+}
+
+/// Plays a cue the way a recording would, with the settings as saved.
+fn play(asked: &Value) -> Res<()> {
+    let name = asked["cue"].as_str().unwrap_or_default();
+    let cue = sound::Cue::ALL.into_iter().find(|c| c.name() == name).ok_or("No such sound.")?;
+    let settings = read(config_path());
+    let get = |k: &str| env::var(k).ok().or_else(|| settings.get(k).cloned()).filter(|v| !v.is_empty());
+    sound::play(cue, get);
+    sound::wait();
+    Ok(())
 }
 
 /// Compares in constant time, so the token can't be guessed a character at a time.
@@ -534,6 +553,22 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
                 let code = |c: &str| (2..=3).contains(&c.len()) && c.chars().all(|c| c.is_ascii_lowercase());
                 if !value.split(',').all(|c| c.is_empty() || c == "auto" || code(c)) {
                     return Err(format!("{value} isn't a language code, those are two or three letters like en or uk.").into());
+                }
+            }
+            // switches: on or unset, nothing else
+            "ROOKEY_QUIET" | "ROOKEY_NO_NOTIFICATIONS" | "ROOKEY_NO_OVERLAY" if !matches!(value.as_str(), "" | "1") => {
+                return Err(format!("{key} is a switch, 1 or nothing.").into());
+            }
+            "ROOKEY_SOUNDS" if !value.is_empty() && !sound::SETS.contains(&value.as_str()) => {
+                return Err(format!("There are no {value} sounds, only {}.", sound::SETS.join(", ")).into());
+            }
+            key if key.starts_with("ROOKEY_SOUND_") && !value.is_empty() => {
+                if let Some(rest) = value.strip_prefix("~/") {
+                    let home = dirs::home_dir().ok_or("Can't tell where ~ is, use the full path.")?;
+                    value = home.join(rest).display().to_string();
+                }
+                if !Path::new(&value).is_file() {
+                    return Err(format!("There's no sound file at {value}.").into());
                 }
             }
             "ROOKEY_UI_THEME" if !value.is_empty() && !UI_THEMES.contains(&value.as_str()) => {
@@ -852,6 +887,14 @@ mod tests {
         assert_eq!(masked("a1b2-0123456789abcdef"), "••••••••cdef"); // not a kind, part of the key
         assert!(changes(br#"{"ROOKEY_SANITIZE": 1}"#).is_err());
         assert!(changes(br#"{"ROOKEY_UI_THEME": "neon"}"#).is_err());
+        assert!(changes(br#"{"ROOKEY_NO_OVERLAY": "yes please"}"#).is_err());
+        assert!(changes(br#"{"ROOKEY_SOUNDS": "kazoo"}"#).is_err());
+        assert_eq!(changes(br#"{"ROOKEY_SOUNDS": "pencil"}"#).unwrap(), [change("ROOKEY_SOUNDS", "pencil")]);
+        assert!(changes(br#"{"ROOKEY_SOUND_START": "/no/such/caw.wav"}"#).is_err());
+        assert!(changes(br#"{"ROOKEY_SOUND_START": "/tmp"}"#).is_err()); // a folder isn't a sound
+        let here = env!("CARGO_MANIFEST_DIR").to_string() + "/Cargo.toml";
+        assert_eq!(changes(format!(r#"{{"ROOKEY_SOUND_STOP": "{here}"}}"#).as_bytes()).unwrap(), [change("ROOKEY_SOUND_STOP", &here)]);
+        assert_eq!(changes(br#"{"ROOKEY_NO_OVERLAY": "1"}"#).unwrap(), [change("ROOKEY_NO_OVERLAY", "1")]);
         assert!(changes(br#"{"ROOKEY_UI_LANG": "xx"}"#).is_err());
         assert_eq!(changes(br#"{"ROOKEY_UI_THEME": "dark"}"#).unwrap(), [change("ROOKEY_UI_THEME", "dark")]);
         assert!(changes(format!(r#"{{"ROOKEY_EDIT": "{}"}}"#, "x".repeat(2001)).as_bytes()).is_err());

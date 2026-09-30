@@ -141,6 +141,9 @@ const engine = () => values().ROOKEY_BACKEND || "local";
 const cloud = () => engine() !== "local";
 const reader = () => (values().ROOKEY_READER in READERS ? values().ROOKEY_READER : "ocr");
 const provider = (id) => ui.s.providers.find((p) => p.id === id);
+const SOUND_SETS = ["rook", "notes", "pencil"]; // sound::SETS, the first is the default
+const CUES = ["start", "stop", "typed", "failed"];
+const soundSet = () => (SOUND_SETS.includes(values().ROOKEY_SOUNDS) ? values().ROOKEY_SOUNDS : SOUND_SETS[0]);
 const hasKey = (id) => provider(id).saved || provider(id).env;
 const number = (n, digits = 0) => n.toLocaleString(ui.lang, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 const size = (mb) => (mb >= 1000 ? t("size.gb", { n: number(mb / 1024, 1) }) : t("size.mb", { n: mb }));
@@ -557,6 +560,8 @@ function Advanced() {
         <p class="hint" hidden="${() => !cloud() || termsMode() === "off"}">${t("terms.cost")}</p>
       </div>
 
+      ${Sounds()}
+
       <div class="sub" id="providers">
         <h3 id="providers-title">${t("keys.title")}</h3>
         <p class="about">${t("keys.about")}</p>
@@ -568,6 +573,44 @@ function Advanced() {
         <p class="hint">${() => tx("files", { config: code(ui.s.path), keys: code(ui.s.keys_path) })}</p>
       </div>
     </details>`;
+}
+
+/** Which sounds, a Play button for each, and a file of your own in place of any. */
+function Sounds() {
+  const setting = (cue) => `ROOKEY_SOUND_${cue.toUpperCase()}`;
+  const play = async (cue) => {
+    try {
+      await call("/api/sound", { cue });
+    } catch (e) {
+      say("status.failed", { why: e.message }, true);
+    }
+  };
+  return html`
+    <div class="sub" id="sounds-field">
+      <h3 id="sounds-title">${t("sounds.set")}</h3>
+      <div class="chips" role="radiogroup" aria-labelledby="sounds-title">
+        ${SOUND_SETS.map((id) =>
+          chip("radio", "sounds", id, () => soundSet() === id, t(`sounds.${id}`), () => save({ ROOKEY_SOUNDS: id === SOUND_SETS[0] ? "" : id })))}
+      </div>
+      <p class="hint">${() => t(`sounds.${soundSet()}.about`)}</p>
+      <ul class="rows">
+        ${CUES.map((cue) => {
+          const id = `sound-${cue}`;
+          const label = t("sounds.play-cue", { cue: t(`cue.${cue}`) });
+          return html`
+          <li class="row">
+            <span class="row-text">
+              <label class="choice-name" for="${id}">${t(`cue.${cue}`)}</label>
+              <input class="typed-input" id="${id}" type="text" spellcheck="false" autocomplete="off" placeholder="${t("cue.builtin")}"
+                .value="${() => values()[setting(cue)]}" @change="${(e) => save({ [setting(cue)]: e.target.value.trim() })}">
+            </span>
+            <button type="button" class="button" aria-label="${label}" @click="${() => play(cue)}">${t("sounds.play")}</button>
+          </li>`;
+        })}
+      </ul>
+      <p class="hint">${t("sounds.files")}</p>
+      ${shell("ROOKEY_SOUNDS")}
+    </div>`;
 }
 
 /** A provider's key, with what can be done with it. The same row shows under Engine and Keys. */
@@ -713,6 +756,8 @@ function Hotkey() {
 
       ${toggle("sounds", t("sounds"), t("sounds.about"), () => !isOn(values().ROOKEY_QUIET), (e) =>
         save({ ROOKEY_QUIET: e.target.checked ? "" : "1" }))}
+      ${toggle("overlay", t("overlay"), tx("overlay.about", { cmd: code("rookey status --follow") }), () => !isOn(values().ROOKEY_NO_OVERLAY), (e) =>
+        save({ ROOKEY_NO_OVERLAY: e.target.checked ? "" : "1" }))}
       ${toggle("notifications", t("notifications"), t("notifications.about"), () => !isOn(values().ROOKEY_NO_NOTIFICATIONS), (e) =>
         save({ ROOKEY_NO_NOTIFICATIONS: e.target.checked ? "" : "1" }))}
     </section>`;

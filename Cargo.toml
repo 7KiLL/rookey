@@ -11,6 +11,7 @@ ctrlc = { version = "3.5", features = ["termination"] }
 base64 = "0.23"
 dirs = "7"
 getrandom = "0.4"  # the page's token, on every system (no /dev/urandom on Windows)
+fontdue = "0.9"  # the indicator's words, from the fonts the page already ships
 percent-encoding = "2"  # already in the tree through ureq
 serde_json = "1"
 tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
@@ -19,13 +20,19 @@ whisper-rs = "0.16"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.13"  # the hotkey rookey listens for itself
+smithay-client-toolkit = { version = "0.21", default-features = false, features = ["calloop"] }  # the on-screen indicator (layer shell)
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_System_Console",
+    "Win32_System_LibraryLoader",
     "Win32_System_Threading",
+    "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
-] }  # typing, the hotkey's key state, whether a recording still runs
+    "Win32_UI_WindowsAndMessaging",
+] }  # typing, the hotkey's key state, whether a recording still runs, the on-screen pill
 
 [features]
 cuda = ["whisper-rs/cuda"]    # Linux + NVIDIA

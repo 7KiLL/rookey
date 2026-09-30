@@ -53,7 +53,12 @@ mod listen;
 #[path = "listen_win.rs"]
 mod listen;
 mod models;
+mod overlay;
+#[cfg(windows)]
+mod overlay_win;
 mod reader;
+mod sound;
+mod status;
 mod ui;
 #[cfg(windows)]
 mod win;
@@ -205,9 +210,13 @@ fn main() {
 }
 
 fn cli() -> Res<()> {
-    let (mut toggle, mut ui, mut open, mut listen) = (false, false, true, false);
-    for arg in env::args().skip(1) {
+    let (mut toggle, mut ui, mut open, mut listen, mut overlay) = (false, false, true, false, false);
+    let args: Vec<String> = env::args().skip(1).collect();
+    for (i, arg) in args.iter().enumerate() {
         match arg.as_str() {
+            // the rest of the line is status's own flags
+            "status" => return status::run(&args[i + 1..]),
+            "overlay" => overlay = true,
             "toggle" => toggle = true,
             "ui" | "setup" => ui = true,
             "listen" => listen = true,
@@ -220,7 +229,9 @@ fn cli() -> Res<()> {
                 VERBOSE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             _ => {
-                eprintln!("usage: rookey [-v|-vv|-vvv] [toggle | listen | setup | ui [--no-open]]");
+                eprintln!(
+                    "usage: rookey [-v|-vv|-vvv] [toggle | listen | setup | ui [--no-open] | status [--json|--waybar] [--follow] | overlay]"
+                );
                 std::process::exit(2);
             }
         }
@@ -230,6 +241,9 @@ fn cli() -> Res<()> {
         return ui::run(open);
     }
     load_config();
+    if overlay {
+        return overlay::run();
+    }
     if listen {
         #[cfg(any(target_os = "linux", windows))]
         return listen::run();
@@ -285,14 +299,29 @@ fn cli() -> Res<()> {
     if toggle {
         let _ = fs::remove_file(&pidfile);
     }
-    let text = text?;
-
-    if toggle {
-        type_text(&text)?;
-    } else {
-        writeln!(std::io::stdout(), "{text}")?; // println! panics on a closed pipe
+    let done = text.and_then(|text| {
+        if toggle {
+            type_text(&text)?;
+        } else {
+            writeln!(std::io::stdout(), "{text}")?; // println! panics on a closed pipe
+        }
+        Ok(text)
+    });
+    // what bars and the pill show next: the words, or why there are none
+    match &done {
+        Ok(text) => status::typed(text),
+        Err(e) => {
+            status::failed(&e.to_string());
+            if toggle && overlay::wanted() {
+                overlay::show(); // a hotkey has no terminal: the pill is where the reason shows
+            }
+        }
     }
-    Ok(())
+    if toggle && setting("ROOKEY_QUIET").is_none() {
+        sound::play(if done.is_ok() { sound::Cue::Typed } else { sound::Cue::Failed }, setting);
+    }
+    sound::wait();
+    done.map(drop)
 }
 
 /// Who asked for the recording, which decides where progress and the text go.
@@ -803,6 +832,9 @@ fn record_until(
         // peak level tells you at a glance whether the mic is actually hearing you
         let peak = chunk.iter().fold(0f32, |m, s| m.max(s.abs()));
         vlog!(3, "mic: {:4} ms captured, peak {peak:.3}", chunk.len() * 1000 / rate as usize);
+        if mode != Mode::Page {
+            status::level(peak);
+        }
         tick(&chunk, rate, false)?;
     }
     drop(stream);
@@ -923,16 +955,26 @@ fn type_text(text: &str) -> Res<()> {
     Ok(())
 }
 
-/// Desktop notification, only in toggle mode (a hotkey has no terminal to print to), and a
-/// sound as the recording starts and ends, so a hotkey needs no look at the screen.
+/// Says what's happening: the status file for bars (see status.rs) on every recording but the
+/// page's test; and from a hotkey, which has no terminal, the pill on screen (or else a
+/// desktop notification) and a sound as the recording starts and ends.
 fn notify(mode: Mode, msg: &str) {
+    if mode == Mode::Page {
+        return;
+    }
+    let recording = msg == "recording";
+    status::set(if recording { "listening" } else { msg }, serde_json::json!({}));
     if mode != Mode::Toggle {
         return;
     }
     if setting("ROOKEY_QUIET").is_none() {
-        chime(msg == "recording");
+        sound::play(if recording { sound::Cue::Start } else { sound::Cue::Stop }, setting);
     }
-    if setting("ROOKEY_NO_NOTIFICATIONS").is_some() {
+    let pill = overlay::wanted();
+    if pill && recording {
+        overlay::show();
+    }
+    if pill || setting("ROOKEY_NO_NOTIFICATIONS").is_some() {
         return;
     }
     #[cfg(target_os = "macos")]
@@ -942,45 +984,6 @@ fn notify(mode: Mode, msg: &str) {
     // ponytail: no toast on Windows, the sounds say it; a toast needs an app id registered first
     #[cfg(not(any(target_os = "macos", windows)))]
     let _ = Command::new("notify-send").args(["-t", "1500", "rookey", msg]).status();
-}
-
-/// Plays the start or the stop sound, without waiting for it.
-// ponytail: the desktop's own sound theme; ship our own sounds if these prove too quiet or missing.
-fn chime(start: bool) {
-    #[cfg(target_os = "macos")]
-    let plays = [["afplay", if start { "/System/Library/Sounds/Tink.aiff" } else { "/System/Library/Sounds/Pop.aiff" }]];
-    // ponytail: PowerShell takes ~0.3 s to start; PlaySound from winmm if the start cue feels late
-    #[cfg(windows)]
-    let plays = [[
-        "powershell",
-        if start {
-            r"(New-Object Media.SoundPlayer 'C:\Windows\Media\Speech On.wav').PlaySync()"
-        } else {
-            r"(New-Object Media.SoundPlayer 'C:\Windows\Media\Speech Off.wav').PlaySync()"
-        },
-    ]];
-    #[cfg(not(any(target_os = "macos", windows)))]
-    let plays = {
-        let sound = if start {
-            "/usr/share/sounds/freedesktop/stereo/device-added.oga"
-        } else {
-            "/usr/share/sounds/freedesktop/stereo/device-removed.oga"
-        };
-        [["pw-play", sound], ["paplay", sound]]
-    };
-    let quiet = std::process::Stdio::null;
-    for [player, what] in plays {
-        let mut cmd = Command::new(player);
-        #[cfg(windows)]
-        cmd.args(["-NoProfile", "-Command"]);
-        cmd.arg(what);
-        no_window(&mut cmd);
-        let played = cmd.stdout(quiet()).stderr(quiet()).spawn();
-        if let Ok(mut child) = played {
-            thread::spawn(move || child.wait());
-            return;
-        }
-    }
 }
 
 #[cfg(test)]
