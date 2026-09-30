@@ -83,7 +83,7 @@ pub fn show() {
     if showing() {
         return;
     }
-    let exe = env::current_exe().unwrap_or_else(|_| "rookey".into());
+    let exe = crate::exe().unwrap_or_else(|_| "rookey".into());
     let mut cmd = Command::new(exe);
     cmd.arg("overlay").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     crate::no_window(&mut cmd);

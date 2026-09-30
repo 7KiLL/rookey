@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::process::Command;
 use std::time::{Duration, Instant};
-use std::{env, fs, thread};
+use std::{fs, thread};
 
 use crate::desktop::Chord;
 
@@ -63,7 +63,7 @@ pub fn recording() -> bool {
 }
 
 pub fn toggle() {
-    let exe = env::current_exe().unwrap_or_else(|_| "rookey".into());
+    let exe = crate::exe().unwrap_or_else(|_| "rookey".into());
     let mut cmd = Command::new(exe);
     cmd.arg("toggle");
     crate::no_window(&mut cmd);

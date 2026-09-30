@@ -4,10 +4,11 @@
 //!   rookey toggle   first call starts recording, second call stops it and types the text
 //!   rookey ui       settings in the browser (`rookey setup` too: what's missing comes first)
 //!   rookey history  the last transcripts, kept on this computer (`--clear` deletes them)
+//!   rookey update   installs a newer release (`--check` only says whether there is one)
 //!
 //! Settings are env vars, or KEY=value lines in <config_dir>/rookey/config (the environment wins):
 //! ROOKEY_MODEL (ggml model path), ROOKEY_LANG (default "auto"), ROOKEY_BACKEND,
-//! ROOKEY_SANITIZE, ROOKEY_EDIT, ROOKEY_WORDS, ROOKEY_CONTEXT, ROOKEY_READER, ROOKEY_HISTORY (see README).
+//! ROOKEY_SANITIZE, ROOKEY_EDIT, ROOKEY_WORDS, ROOKEY_CONTEXT, ROOKEY_READER, ROOKEY_HISTORY, ROOKEY_AUTOUPDATE (see README).
 //! API keys are read the same way, from <data_dir>/rookey/keys.
 
 use std::collections::HashMap;
@@ -62,6 +63,7 @@ mod reader;
 mod sound;
 mod status;
 mod ui;
+mod update;
 #[cfg(windows)]
 mod win;
 
@@ -102,6 +104,21 @@ fn no_window(cmd: &mut Command) {
     std::os::windows::process::CommandExt::creation_flags(cmd, 0x0800_0000); // CREATE_NO_WINDOW
     #[cfg(not(windows))]
     let _ = cmd;
+}
+
+/// This program's file, to start again. After an update put a new one in its place, that is
+/// the new one: Linux names the running file "rookey (deleted)" then, and on Windows it was
+/// moved aside to rookey.old.exe.
+fn exe() -> std::io::Result<PathBuf> {
+    Ok(on_disk(env::current_exe()?))
+}
+
+fn on_disk(exe: PathBuf) -> PathBuf {
+    let name = exe.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    match name.strip_suffix(" (deleted)").map(str::to_string).or_else(|| Some(name.strip_suffix(".old.exe")?.to_string() + ".exe")) {
+        Some(name) => exe.with_file_name(name),
+        None => exe,
+    }
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -219,6 +236,11 @@ fn cli() -> Res<()> {
             // the rest of the line is status's own flags
             "status" => return status::run(&args[i + 1..]),
             "history" => return history::run(&args[i + 1..]),
+            "update" => return update::run(&args[i + 1..]),
+            "--version" | "-V" => {
+                println!("rookey {}", update::VERSION);
+                return Ok(());
+            }
             "overlay" => overlay = true,
             "toggle" => toggle = true,
             "ui" | "setup" => ui = true,
@@ -233,13 +255,15 @@ fn cli() -> Res<()> {
             }
             _ => {
                 eprintln!(
-                    "usage: rookey [-v|-vv|-vvv] [toggle | listen | setup | ui [--no-open] | status [--json|--waybar] [--follow] | overlay | history [--clear]]"
+                    "usage: rookey [-v|-vv|-vvv] [toggle | listen | setup | ui [--no-open] | status [--json|--waybar] [--follow] | overlay | history [--clear] | update [--check] | --version]"
                 );
                 std::process::exit(2);
             }
         }
     }
     move_from_yap();
+    #[cfg(windows)]
+    update::clear_old();
     if ui {
         return ui::run(open);
     }
@@ -1117,6 +1141,13 @@ mod tests {
             .chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / i16::MAX as f32)
             .collect()
+    }
+
+    #[test]
+    fn the_file_on_disk_after_an_update() {
+        assert_eq!(on_disk("/home/me/.local/bin/rookey (deleted)".into()), PathBuf::from("/home/me/.local/bin/rookey"));
+        assert_eq!(on_disk("/home/me/.local/bin/rookey".into()), PathBuf::from("/home/me/.local/bin/rookey"));
+        assert_eq!(on_disk("C:/rookey/rookey.old.exe".into()), PathBuf::from("C:/rookey/rookey.exe"));
     }
 
     #[test]

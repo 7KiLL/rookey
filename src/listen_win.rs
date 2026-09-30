@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use std::{env, fs, thread};
+use std::{fs, thread};
 
 use windows_sys::Win32::System::Console::FreeConsole;
 
@@ -129,6 +129,7 @@ pub fn run() -> Res<()> {
     fs::write(pidfile(), std::process::id().to_string())?;
     // started from the Run key it got a console window of its own, which this closes
     unsafe { FreeConsole() };
+    crate::update::in_background(true);
 
     let mut keys = vec![key, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5];
     keys.dedup();
@@ -197,7 +198,7 @@ fn reg(args: &[&str]) -> Res<()> {
 
 /// Starts at every login from now on, and (re)starts now, so it picks up the keys just saved.
 pub fn start() -> Res<()> {
-    let exe = env::current_exe()?;
+    let exe = crate::exe()?;
     reg(&["add", RUN_KEY, "/v", RUN_NAME, "/t", "REG_SZ", "/d", &format!("\"{}\" listen", exe.display()), "/f"])?;
     end();
     let mut cmd = Command::new(exe);
@@ -213,6 +214,13 @@ pub fn stop() -> Res<()> {
     // not there is fine: nothing to take out
     let _ = reg(&["delete", RUN_KEY, "/v", RUN_NAME, "/f"]);
     Ok(())
+}
+
+/// Leaves the listener running: it picks a new binary up at the next login.
+// ponytail: which rookey.exe the running listener is isn't checked here, so it isn't ended;
+// read the Run key's value and compare it with `exe` to restart it like on Linux.
+pub fn restart(_exe: &std::path::Path) -> Res<bool> {
+    Ok(false)
 }
 
 pub fn running() -> bool {

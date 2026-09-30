@@ -278,6 +278,26 @@ h1 {
   border-color: var(--ink-soft);
 }
 
+/* which rookey this is, in small print under the prefs */
+.version {
+  margin-top: 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.version .button {
+  height: auto;
+  min-height: 1.5rem;
+  padding: 0 0.125rem;
+  color: inherit;
+  font-size: inherit;
+}
+
+.version .problem-text {
+  color: var(--red);
+}
+
 /* ---- groups ----------------------------------------------------------- */
 
 .group {

@@ -12,7 +12,7 @@ use std::process::Command;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
-use std::{env, fs, thread};
+use std::{fs, thread};
 
 use evdev::{EventSummary, KeyCode};
 
@@ -109,6 +109,7 @@ pub fn run() -> Res<()> {
         return Err(why.into());
     }
     eprintln!("rookey listen: hold {chord} to talk, tap it to keep talking");
+    crate::update::in_background(true);
 
     let (tx, rx) = mpsc::channel();
     let open = Arc::new(Mutex::new(HashSet::new()));
@@ -222,7 +223,7 @@ fn systemctl(args: &[&str]) -> Res<()> {
 
 /// Installs the service and (re)starts it, so it picks up the keys just saved.
 pub fn start() -> Res<()> {
-    let exe = env::current_exe()?;
+    let exe = crate::exe()?;
     let unit = format!(
         "# Written by `rookey ui`, which rewrites or removes it: change the hotkey there.\n\
          [Unit]\n\
@@ -253,6 +254,17 @@ pub fn stop() -> Res<()> {
     let _ = systemctl(&["disable", "--now", UNIT]);
     fs::remove_file(path)?;
     systemctl(&["daemon-reload"])
+}
+
+/// Starts the service again on the binary on disk now, if it runs and runs `exe`: another
+/// rookey's service is left alone. Whether it was restarted.
+pub fn restart(exe: &std::path::Path) -> Res<bool> {
+    let unit = unit_path().and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
+    if !unit.contains(&format!("ExecStart=\"{}\" listen", exe.display())) || !running() {
+        return Ok(false);
+    }
+    systemctl(&["try-restart", UNIT])?;
+    Ok(true)
 }
 
 pub fn running() -> bool {
