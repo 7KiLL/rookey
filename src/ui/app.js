@@ -471,7 +471,7 @@ function Models() {
       <div class="choices" role="radiogroup" aria-labelledby="models-title">
         ${() => models().installed.map((m) =>
           choice("model", m.path, m.path === models().in_use, m.name || m.file,
-            t("models.in", { size: size(m.mb), where: m.shown.slice(0, m.shown.lastIndexOf("/")) }),
+            t("models.in", { size: size(m.mb), where: m.shown.replace(/[\\/][^\\/]*$/, "") }),
             () => save({ ROOKEY_MODEL: m.default ? "" : m.path })))}
       </div>
       <p class="problem" hidden="${() => models().found}">${() => tx("models.missing", { path: code(models().in_use) })}</p>
