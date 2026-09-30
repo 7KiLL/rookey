@@ -115,6 +115,21 @@ body {
   margin: 0;
 }
 
+/* rookey's own window on macOS draws the page under the title bar: a strip of paper keeps
+   the text from scrolling under the window's buttons, and moves the window when pressed */
+:root[data-window="mac"] {
+  --titlebar: 28px;
+}
+
+:root[data-window="mac"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--titlebar);
+  background: var(--paper);
+  z-index: 100;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   html {
     scroll-behavior: smooth;
@@ -206,7 +221,7 @@ pre,
 
 .specimen-inner {
   position: sticky;
-  top: 0;
+  top: var(--titlebar, 0);
   max-width: var(--column);
   padding: 4rem 0 3rem;
 }
@@ -1146,7 +1161,7 @@ textarea:focus-visible {
 
 .stopped {
   position: sticky;
-  top: 0;
+  top: var(--titlebar, 0);
   z-index: 2;
   padding: 0.875rem var(--gutter);
   background: var(--red);

@@ -1,24 +1,26 @@
 # rookey dev commands: `just` lists them.
-# FEATURES picks the whisper.cpp backend: cuda (Linux + NVIDIA, the default here), metal (macOS), or empty.
+# FEATURES picks the whisper.cpp backend: cuda (Linux + NVIDIA, the default there), metal (the default
+# on macOS), or empty for the CPU.
 
-features := env("FEATURES", "cuda")
+features := env("FEATURES", if os() == "macos" { "metal" } else { "cuda" })
 cargo_features := if features == "" { "" } else { "--features " + features }
 
 default:
     @just --list
 
-# build the release binary
+# build the release binaries: rookey and its settings window
 build:
     cargo build --release {{cargo_features}}
+    cargo build --release -p rookey-window
 
-# build, replace ~/.local/bin/rookey, restart the hotkey listener if it runs
+# build, replace ~/.local/bin/rookey and its window, restart the hotkey listener if it runs
 install: build
-    install -m755 target/release/rookey ~/.local/bin/rookey
-    -systemctl --user try-restart rookey-listen
+    for f in rookey rookey-window; do install -m755 target/release/$f ~/.local/bin/$f.new && mv ~/.local/bin/$f.new ~/.local/bin/$f; done
+    -if command -v systemctl >/dev/null; then systemctl --user try-restart rookey-listen; fi
 
 # install, close a running settings page, open a fresh one
 ui: install
-    -for p in $(pgrep -x rookey); do tr '\0' ' ' < /proc/$p/cmdline | grep -q ' ui' && kill $p; done
+    -for p in $(pgrep -x rookey); do ps -o args= -p $p | grep -q ' ui' && kill $p; done
     rookey ui
 
 test:
