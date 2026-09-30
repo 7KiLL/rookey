@@ -320,11 +320,59 @@ function checkWords(c) {
   const engine = html`<a href="#engine-title">${t("engine.title")}</a>`;
   if (!has(`check.${c.id}.title`)) return { title: c.title, missing: [c.missing] };
   let title = t(`check.${c.id}.title`);
-  let missing = tx(`check.${c.id}.missing`, { engine });
+  // macOS grants its permissions to the app rookey ui runs in, named where the server could
+  const app = ui.s.app || t("check.app.unknown");
+  let missing = tx(`check.${c.id}.missing`, { engine, app });
   if (c.id === "mic" && c.title.includes(": ")) title = t("check.mic.named", { name: c.title.split(": ").slice(1).join(": ") });
   // which tools, as the server found them with the environment winning over the config
   if (c.id === "screen") missing = tx("check.screen.missing", { tools: listOf(c.tools || []) });
+  // the default model is here, so the one the settings name is somewhere else
+  if (c.id === "model" && ui.s.models.catalog[0].installed) missing = tx("check.model.elsewhere", { engine });
   return { title, missing };
+}
+
+/** The one thing that fixes a failing check: a command to copy, a settings pane, or the fix itself. */
+function checkFix(c) {
+  if (c.ok) return "";
+  if (c.fix) return html`<span class="with-button"><code class="fix">${c.fix}</code>${copyButton(() => c.fix)}</span>`;
+  const button = (key, click) => html`<span class="actions"><button type="button" class="button is-primary" @click="${click}">${t(key)}</button></span>`;
+  if (c.open) return button(`open.${c.open}`, () => openPane(c.open));
+  if (c.id === "key") {
+    return button("key.add", () => {
+      ui.provider = { id: "elevenlabs", where: "engine", doing: "edit" };
+      focus("#key-elevenlabs-engine");
+    });
+  }
+  if (c.id === "model" && !ui.s.models.catalog[0].installed) return ModelFix(ui.s.models.catalog[0]);
+  return "";
+}
+
+/** The default model's download, started from the check and followed there. */
+function ModelFix(m) {
+  const download = () => ui.s.models.download;
+  const running = () => Boolean(download()?.file === m.file && download().running);
+  const part = () => (download()?.total ? download().done / download().total : 0);
+  const mb = (bytes) => Math.round(bytes / 1048576);
+  return html`
+    <span class="actions" hidden="${running}">
+      <button type="button" class="button is-primary" disabled="${() => Boolean(download()?.running)}" @click="${() => downloadModel(m)}">${
+        t("check.model.download", { name: m.name, size: size(m.mb) })}</button>
+    </span>
+    <span class="check-progress" hidden="${() => !running()}">
+      <progress class="progress" max="100" aria-label="${t("download.label", { name: m.name })}"
+        value="${() => Math.round(part() * 1000) / 10}"></progress>
+      <span class="progress-text">${() =>
+        download()?.total ? t("download.progress", { done: mb(download().done), total: mb(download().total) }) : t("download.connecting")}</span>
+    </span>`;
+}
+
+async function downloadModel(m) {
+  if (await send("/api/model", { download: m.file }, "download.starting", { name: m.name })) say("download.running", { name: m.name });
+}
+
+/** Opens the system's settings where the switch is. Coming back to the page checks again. */
+async function openPane(what) {
+  if (await send("/api/open", { what }, "status.opening")) say("status.opened");
 }
 
 function Checks() {
@@ -342,9 +390,9 @@ function Checks() {
               <span class="row-text">
                 <span class="choice-name">${words.title}</span>
                 ${c.ok ? "" : html`<span class="choice-about">${words.missing}</span>`}
-                ${c.fix ? html`<span class="with-button"><code class="fix">${c.fix}</code>${copyButton(() => c.fix)}</span>` : ""}
+                ${checkFix(c)}
               </span>
-            </li>`;
+            </li>`.key(JSON.stringify(c)); // a row whose check changed is drawn anew, not patched
         })}
       </ul>
       <div class="actions">
@@ -352,6 +400,20 @@ function Checks() {
       </div>
     </section>
     <p class="ready" hidden="${failing}">${t("setup.ready")}</p>`;
+}
+
+/** Back from System Settings or a terminal: checks again while something is missing. */
+let rechecking = false;
+async function recheck() {
+  if (rechecking || ui.stopped || !ui.ready || ui.s.checks.every((c) => c.ok) || moving()) return;
+  rechecking = true;
+  try {
+    take(await call("/api/state"));
+    if (ui.s.checks.every((c) => c.ok)) say("status.all-here");
+  } catch {
+    // the line under the heading says it when the server is gone
+  }
+  rechecking = false;
 }
 
 async function checkAgain() {
@@ -431,9 +493,6 @@ function ModelRow(m) {
   const failed = () => Boolean(mine() && download().error);
   const part = () => (download()?.total ? download().done / download().total : 0);
   const mb = (bytes) => Math.round(bytes / 1048576);
-  const start = async () => {
-    if (await send("/api/model", { download: m.file }, "download.starting", { name: m.name })) say("download.running", { name: m.name });
-  };
   const halt = async () => {
     await send("/api/model", { cancel: true }, "download.stopping");
     say("download.stopped", { name: m.name });
@@ -445,7 +504,7 @@ function ModelRow(m) {
         <span class="choice-about">${has(`model.${m.file}`) ? t(`model.${m.file}`) : m.about}</span>
       </span>
       <span class="actions">
-        <button type="button" class="button" hidden="${running}" disabled="${() => Boolean(download()?.running && !mine())}" @click="${start}">${() =>
+        <button type="button" class="button" hidden="${running}" disabled="${() => Boolean(download()?.running && !mine())}" @click="${() => downloadModel(m)}">${() =>
           t(failed() ? "download.again" : "download")}</button>
         <button type="button" class="button" hidden="${() => !running()}" @click="${halt}">${t("download.stop")}</button>
       </span>
@@ -1211,6 +1270,7 @@ async function start() {
   // dictated in another window: the list is fresh when you come back
   loadHistory();
   window.addEventListener("focus", loadHistory);
+  window.addEventListener("focus", recheck);
 
   // Held open so `rookey ui` can tell when this page is closed, and the page when rookey ui is.
   const line = new EventSource(`/api/alive?t=${encodeURIComponent(token)}`);

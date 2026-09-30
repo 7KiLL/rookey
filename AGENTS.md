@@ -31,6 +31,7 @@ cargo test --release                                               # CPU
 | `src/sound.rs` | The cues (start, stop, typed, failed): three synthesized sets played through cpal, or a user's file through the system player |
 | `src/update.rs` | `rookey update` and the daily background check: GitHub's latest release, this build's archive, SHA256SUMS, the swap next to the running binary |
 | `src/win.rs` | The Windows calls: typing (SendInput), a key's state, whether a pid runs |
+| `src/mac.rs` | The macOS privacy switches (microphone, screen recording, Accessibility, Automation of System Events), read and asked for. macOS files them under the responsible app: the terminal, or the hotkey app, never rookey |
 | `install.sh`, `install.ps1` | Install the release build and nothing else; the model is picked in `rookey setup` |
 | `.github/workflows/release.yml`, `cliff.toml` | A `v*` tag builds every archive and writes the notes from Conventional Commits |
 | `window/` | `rookey-window`, a workspace member of its own: the page in a wry webview window. `rookey ui` starts it from beside its binary and falls back to the browser. Only it links WebKitGTK/WebView2, never `rookey`. Built and tested apart: `cargo build --release -p rookey-window`, `cargo test --release -p rookey-window` |

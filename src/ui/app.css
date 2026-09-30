@@ -590,7 +590,7 @@ input[type="checkbox"] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   column-gap: 0.875rem;
-  align-items: center;
+  align-items: start; /* the mark stays with the name, above the fix */
   padding: 0.75rem 0;
 }
 
@@ -603,6 +603,7 @@ input[type="checkbox"] {
   place-content: center;
   width: 1.25rem;
   height: 1.25rem;
+  margin-top: 0.125rem; /* centred on the name's first line */
   border-radius: 50%;
   font-size: 0.8125rem;
   font-weight: 800;
@@ -627,8 +628,14 @@ input[type="checkbox"] {
   content: "!";
 }
 
-.check .with-button {
+.check .with-button,
+.check .actions,
+.check-progress {
   margin-top: 0.5rem;
+}
+
+.check-progress {
+  display: block;
 }
 
 .fix {
