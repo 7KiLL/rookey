@@ -811,6 +811,53 @@ input[type="checkbox"] {
   color: var(--paper-raised);
 }
 
+/* ---- your words: typed by you, so in the typed face; a click takes one out */
+
+.about + .words {
+  margin-top: 1.25rem;
+}
+
+.words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.words + .field {
+  margin-top: 1.25rem;
+}
+
+.word {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  padding: 0.25rem 0.625rem 0.25rem 0.875rem;
+  border: 1.5px solid var(--ink);
+  border-radius: 1.25rem;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--keys);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: border-color 120ms ease-out, color 120ms ease-out;
+}
+
+.word-x {
+  font-family: var(--voice);
+  font-size: 1.125rem;
+  line-height: 1;
+  color: var(--ink-soft);
+}
+
+.word:hover {
+  border-color: var(--red);
+}
+
+.word:hover .word-x {
+  color: var(--red);
+}
+
 /* ---- fields ----------------------------------------------------------- */
 
 .field {

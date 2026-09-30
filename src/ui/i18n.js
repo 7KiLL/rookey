@@ -108,6 +108,16 @@ const en = {
   "terms.screen": "Reads your screen as you start, so names like spawn_model_loader come out the way your code spells them.",
   "terms.local": " Nothing leaves your computer.",
 
+  "words.title": "Your words",
+  "words.about": "Names, jargon and product names you want spelled your way. It listens for them, and writes them the way you do.",
+  "words.add": "Add a word",
+  "words.add.button": "Add",
+  "words.placeholder": "Kubernetes, Oleksandra",
+  "words.hint": "Several at once with commas. Up to 5 words and 49 characters each.",
+  "words.remove": "Remove {word}",
+  "words.local": "Whisper on this machine gets them as a hint. Nothing leaves your computer.",
+  "words.cloud": "They go to ElevenLabs with every recording, as key terms billed on top of the transcription. Streaming takes the first 50, up to 20 characters each.",
+
   "hotkey.title": "Hotkey",
   "hotkey.about": "Starts a recording, and when it stops, types the text into the window you are in.",
   "hotkey.listen": "rookey listens for it",
@@ -372,6 +382,16 @@ const uk = {
   "terms.command": "Терміни беруться з вашої команди, заданої в розділі «Додатково».",
   "terms.screen": "Читає ваш екран, коли ви починаєте, тож назви на кшталт spawn_model_loader виходять так, як їх пише ваш код.",
   "terms.local": " Нічого не покидає ваш комп’ютер.",
+
+  "words.title": "Ваші слова",
+  "words.about": "Імена, жаргон і назви продуктів, які треба писати по-вашому. Прислухається до них і пише так, як ви.",
+  "words.add": "Додати слово",
+  "words.add.button": "Додати",
+  "words.placeholder": "Kubernetes, Олександра",
+  "words.hint": "Кілька одразу — через кому. До 5 слів і 49 символів у кожному.",
+  "words.remove": "Прибрати {word}",
+  "words.local": "Whisper на цьому комп’ютері отримує їх як підказку. Нічого не покидає ваш комп’ютер.",
+  "words.cloud": "Вони йдуть до ElevenLabs із кожним записом як ключові терміни, за які платите окремо від розпізнавання. Потоковий режим бере перші 50, до 20 символів кожне.",
 
   "hotkey.title": "Гаряча клавіша",
   "hotkey.about": "Починає запис, а коли він зупиняється, набирає текст у вікні, де ви зараз.",

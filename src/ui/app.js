@@ -242,7 +242,7 @@ function Header() {
 }
 
 function Settings() {
-  return html`${Checks()}${Engine()}${Languages()}${Cleanup()}${Hotkey()}${Advanced()}`;
+  return html`${Checks()}${Engine()}${Languages()}${Cleanup()}${Words()}${Hotkey()}${Advanced()}`;
 }
 
 /** A setting the shell overrides, noted next to it. */
@@ -497,6 +497,41 @@ function Cleanup() {
       ${shell("ROOKEY_SANITIZE")}
       ${toggle("terms", t("terms"), terms, () => termsMode() !== "off", (e) => save({ ROOKEY_CONTEXT: e.target.checked ? "1" : "" }))}
       ${shell("ROOKEY_CONTEXT")}
+    </section>`;
+}
+
+// ---- your words -------------------------------------------------------------
+
+const words = () => (values().ROOKEY_WORDS || "").split(",").filter(Boolean);
+
+function Words() {
+  const draft = reactive({ text: "" });
+  const add = async (e) => {
+    e.preventDefault();
+    const typed = draft.text.split(",").map((w) => w.trim()).filter((w) => w && !words().includes(w));
+    if (typed.length === 0) return focus("#word");
+    if (await save({ ROOKEY_WORDS: [...words(), ...typed].join(",") })) draft.text = "";
+    focus("#word");
+  };
+  const remove = (word) => () => save({ ROOKEY_WORDS: words().filter((w) => w !== word).join(",") });
+  return html`
+    <section class="group" aria-labelledby="words-title">
+      <h2 id="words-title">${t("words.title")}</h2>
+      <p class="about">${t("words.about")}</p>
+      <ul class="words" aria-labelledby="words-title" hidden="${() => words().length === 0}">
+        ${() => words().map((w) => html`<li><button type="button" class="word" aria-label="${t("words.remove", { word: w })}" @click="${remove(w)}"><span>${w}</span><span class="word-x" aria-hidden="true">×</span></button></li>`)}
+      </ul>
+      <form class="field" @submit="${add}">
+        <label for="word">${t("words.add")}</label>
+        <div class="with-button">
+          <input class="typed-input" id="word" type="text" spellcheck="false" autocomplete="off" maxlength="200" placeholder="${t("words.placeholder")}"
+            .value="${() => draft.text}" @input="${(e) => (draft.text = e.target.value)}">
+          <button type="submit" class="button">${t("words.add.button")}</button>
+        </div>
+        <p class="hint">${t("words.hint")}</p>
+      </form>
+      <p class="hint">${() => (cloud() ? t("words.cloud") : t("words.local"))}</p>
+      ${shell("ROOKEY_WORDS")}
     </section>`;
 }
 

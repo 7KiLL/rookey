@@ -6,7 +6,7 @@
 //!
 //! Settings are env vars, or KEY=value lines in <config_dir>/rookey/config (the environment wins):
 //! ROOKEY_MODEL (ggml model path), ROOKEY_LANG (default "auto"), ROOKEY_BACKEND,
-//! ROOKEY_SANITIZE, ROOKEY_EDIT, ROOKEY_CONTEXT, ROOKEY_READER (see README).
+//! ROOKEY_SANITIZE, ROOKEY_EDIT, ROOKEY_WORDS, ROOKEY_CONTEXT, ROOKEY_READER (see README).
 //! API keys are read the same way, from <data_dir>/rookey/keys.
 
 use std::collections::HashMap;
@@ -382,7 +382,7 @@ fn run(mode: Mode, stop_rx: mpsc::Receiver<()>) -> Res<String> {
                     settle(&mut context);
                 }
                 // realtime takes up to 50 keyterms of 20 characters
-                *rt = Some(Realtime::connect(&context_terms(&mut context, 50, 20))?);
+                *rt = Some(Realtime::connect(&key_terms(&mut context, 50, 20))?);
             }
             let rt = rt.as_mut().unwrap();
             rt.send(&std::mem::take(&mut held), false)?;
@@ -399,10 +399,10 @@ fn run(mode: Mode, stop_rx: mpsc::Receiver<()>) -> Res<String> {
             &loader.join().map_err(|_| "model loader panicked")??,
             &audio,
             // the prompt holds ~224 tokens and an identifier takes several
-            &context_terms(&mut context, 30, 49),
+            &key_terms(&mut context, 30, 49),
         ),
         // up to 1000 keyterms under 50 characters, but past 100 a 20 s minimum is billed
-        Backend::ElevenLabs => elevenlabs(&audio, &context_terms(&mut context, 100, 49)),
+        Backend::ElevenLabs => elevenlabs(&audio, &key_terms(&mut context, 100, 49)),
         Backend::Realtime(Some(rt)) => rt.finish(show_partials),
         Backend::Realtime(None) => Ok(String::new()), // stopped before the first tick
     }
@@ -454,6 +454,25 @@ fn context_terms(context: &mut Option<Context>, max: usize, max_len: usize) -> V
         false => keyterms(&context.text, max, max_len),
     };
     vlog!(2, "context: {} terms: {}", terms.len(), terms.join(", "));
+    terms
+}
+
+/// Your own words (ROOKEY_WORDS, comma-separated) first, then the context's, within the
+/// engine's limits. A word longer than the engine takes is left out.
+fn key_terms(context: &mut Option<Context>, max: usize, max_len: usize) -> Vec<String> {
+    let terms = words_and(&setting("ROOKEY_WORDS").unwrap_or_default(), context_terms(context, max, max_len), max, max_len);
+    vlog!(2, "key terms: {}", terms.join(", "));
+    terms
+}
+
+fn words_and(words: &str, context: Vec<String>, max: usize, max_len: usize) -> Vec<String> {
+    let mut terms = listed_terms(&words.replace(',', "\n"), max, max_len);
+    for term in context {
+        if !terms.contains(&term) {
+            terms.push(term);
+        }
+    }
+    terms.truncate(max);
     terms
 }
 
@@ -1085,6 +1104,14 @@ mod tests {
         );
         assert_eq!(config["ROOKEY_EDIT"], "drop \"um\"");
         assert_eq!(config["KEY"], "a=b");
+    }
+
+    #[test]
+    fn words_come_first() {
+        let context = vec!["Realtime".to_string(), "rookey".to_string()];
+        let terms = words_and(" rookey, Kyiv ,,a-very-long-product-name-here", context, 3, 20);
+        assert_eq!(terms, ["rookey", "Kyiv", "Realtime"]);
+        assert_eq!(words_and("", vec!["x_y".into()], 3, 20), ["x_y"]);
     }
 
     #[test]
