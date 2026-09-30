@@ -6,7 +6,7 @@
 //! for the app responsible for this process.
 
 use std::ffi::{c_char, c_void};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -295,8 +295,9 @@ pub fn place_app(from: &Path) -> Res<PathBuf> {
         if fs::read(&path).is_ok_and(|there| there == bytes) {
             return Ok(());
         }
-        // a new file then a rename: the running app keeps the one it started from
-        let new = path.with_extension("new");
+        // a new file then a rename: the running app keeps the one it started from. Named per
+        // process: two hotkey presses at once each put Rookey together, and must not share one
+        let new = path.with_extension(format!("new-{}", std::process::id()));
         fs::write(&new, bytes)?;
         fs::set_permissions(&new, fs::Permissions::from_mode(0o755))?;
         fs::rename(&new, &path)?;
@@ -384,6 +385,7 @@ pub fn as_app(args: &[&str], wait: Option<Duration>) -> Res<String> {
 /// Runs this rookey command again as Rookey, through LaunchServices: `rookey ui` waits for it
 /// and shows what it prints in this terminal; `rookey toggle` from a hotkey app returns at once.
 /// The settings and PATH (tesseract is in Homebrew's folder) go along, as `open` passes none.
+/// API keys from the environment go in a file only this user can read (see `hand_over_keys`).
 pub fn relaunch(args: &[String], wait: bool) -> Res<()> {
     let app = place_app(&crate::exe()?)?;
     let mut open = Command::new("open");
@@ -400,9 +402,17 @@ pub fn relaunch(args: &[String], wait: bool) -> Res<()> {
             open.arg("--env").arg(format!("{key}={value}"));
         }
     }
+    let keys = hand_over_keys(|key| env::var(key).ok())?;
+    if let Some(keys) = &keys {
+        open.arg("--env").arg(format!("{KEYS_FROM}={}", keys.display()));
+    }
+    if wait {
+        // Ctrl-C here ends this and open, not Rookey: it watches for this to go, and stops too
+        open.arg("--env").arg(format!("{WAITER}={}", std::process::id()));
+    }
     let mut child = open.arg(&app).arg("--args").args(args).stdin(Stdio::null()).spawn()?;
     let mut passed = 0;
-    let status = loop {
+    let mut pass_on = || {
         if let Some(relay) = &relay {
             if let Ok(text) = fs::read(relay) {
                 if text.len() > passed {
@@ -411,18 +421,71 @@ pub fn relaunch(args: &[String], wait: bool) -> Res<()> {
                 }
             }
         }
+    };
+    let status = loop {
+        pass_on();
         if let Some(status) = child.try_wait()? {
             break status;
         }
         std::thread::sleep(Duration::from_millis(100));
     };
-    if let Some(relay) = relay {
-        let _ = fs::remove_file(relay);
+    // what Rookey wrote between the last look and its end, its last words among them
+    pass_on();
+    for file in [relay, keys.filter(|_| wait)].into_iter().flatten() {
+        let _ = fs::remove_file(file);
     }
     if !status.success() {
         return Err(format!("couldn't start Rookey ({}); ROOKEY_IN_TERMINAL=1 runs it here instead", app.display()).into());
     }
     Ok(())
+}
+
+const KEYS_FROM: &str = "ROOKEY_KEYS_FROM";
+const WAITER: &str = "ROOKEY_WAITER";
+const KEYS: [&str; 3] = ["ELEVENLABS_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
+
+/// The API keys set in this environment, written for Rookey to read: `open --env` would show
+/// them to anyone running `ps`. The file is 0600 in this user's own temp folder, and Rookey
+/// deletes it as it starts.
+// ponytail: a Rookey that never starts leaves the file behind until the system clears the
+// temp folder; a socket handed over to it if that ever matters.
+fn hand_over_keys(var: impl Fn(&str) -> Option<String>) -> Res<Option<PathBuf>> {
+    let text: String = KEYS.iter().filter_map(|key| Some(format!("{key}={}\n", var(key).filter(|v| !v.is_empty())?))).collect();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let path = env::temp_dir().join(format!("rookey-keys-{}-{nanos}", std::process::id()));
+    let mut file = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path)?;
+    std::io::Write::write_all(&mut file, text.as_bytes())?;
+    Ok(Some(path))
+}
+
+/// Takes the keys `relaunch` handed over into this process's environment. Called first thing,
+/// before there are threads to race with.
+pub fn keys_handed_over() {
+    let Some(path) = env::var_os(KEYS_FROM) else { return };
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let _ = fs::remove_file(&path);
+    // one thread yet; and what Rookey starts has nothing to read
+    unsafe { env::remove_var(KEYS_FROM) };
+    for (key, value) in crate::parse_config(&text) {
+        if KEYS.contains(&key.as_str()) {
+            unsafe { env::set_var(key, value) };
+        }
+    }
+}
+
+/// The page's server, started by a `rookey ui` in a terminal, stops when that one is gone:
+/// Ctrl-C there reaches it and `open`, never Rookey.
+pub fn stop_with_waiter() {
+    let Some(pid) = env::var(WAITER).ok().and_then(|p| p.parse().ok()) else { return };
+    std::thread::spawn(move || {
+        while alive(pid) {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        std::process::exit(0);
+    });
 }
 
 /// This terminal, for Rookey to print into.
@@ -455,6 +518,16 @@ pub fn answer(text: &str) -> Res<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_go_over_in_a_file_only_this_user_reads() {
+        assert!(hand_over_keys(|_| None).unwrap().is_none());
+        let path = hand_over_keys(|key| (key == "OPENAI_API_KEY").then(|| "sk-x=1".into())).unwrap().unwrap();
+        let (text, mode) = (fs::read_to_string(&path).unwrap(), fs::metadata(&path).unwrap().permissions().mode());
+        fs::remove_file(&path).unwrap();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(crate::parse_config(&text).get("OPENAI_API_KEY").map(String::as_str), Some("sk-x=1"));
+    }
 
     #[test]
     fn statuses_read_right() {

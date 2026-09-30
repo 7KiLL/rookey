@@ -249,6 +249,8 @@ fn cli() -> Res<()> {
     // as given, for Rookey to be started with (macOS)
     #[cfg(target_os = "macos")]
     let args: Vec<String> = env::args().skip(1).collect();
+    #[cfg(target_os = "macos")]
+    mac::keys_handed_over();
     let cli = cli::parse();
     VERBOSE.store(cli.verbose, std::sync::atomic::Ordering::Relaxed);
     let (mut toggle, mut ui, mut open, mut listen, mut overlay) = (false, false, true, false, false);
@@ -285,6 +287,10 @@ fn cli() -> Res<()> {
     #[cfg(target_os = "macos")]
     if (ui || toggle) && !mac::is_app() && env::var_os("ROOKEY_IN_TERMINAL").is_none() {
         return mac::relaunch(&args, ui);
+    }
+    #[cfg(target_os = "macos")]
+    if ui && mac::is_app() {
+        mac::stop_with_waiter();
     }
     move_from_yap();
     #[cfg(windows)]
