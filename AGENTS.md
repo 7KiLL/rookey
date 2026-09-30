@@ -45,6 +45,7 @@ Settings: environment variables win over `<config_dir>/rookey/config` (`KEY=valu
 - **The page server trusts nothing.** Keep the one-time token check, the setting whitelist in `changes()`, the 64 KB request cap and the CSP. Any new setting gets a validation arm in `changes()` and a test.
 - **Compositor edits go through `desktop.rs`.** Only files inside the compositor's own config tree are written. They are validated by the compositor (`niri validate`, `Hyprland --verify-config`) and restored byte for byte on failure. niri allows one `binds {}` per file, so rookey writes its own `rookey.kdl` and includes it. The chord is checked against injection before it is written.
 - **UI assets are compiled in.** Rebuild and restart `rookey ui` after any HTML, CSS or JS change.
+- **Scratch XDG dirs don't isolate systemd.** `rookey listen` and `rookey update` talk to the real user service whatever `XDG_*` says; don't run them in a test without checking what they'd restart.
 - **Don't kill processes with `pkill -f <text>`.** It matches the shell running the command. Keep a pidfile and kill by pid.
 - **Don't name other dictation products** in code, docs, commits or UI copy.
 
