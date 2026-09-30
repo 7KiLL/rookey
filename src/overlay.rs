@@ -2,8 +2,8 @@
 //! It is its own process that follows the status file (see status.rs), so it never slows the
 //! recording down, and a crash in it costs nothing but the pill. It quits once rookey is idle.
 //!
-//! The pill is drawn here into premultiplied BGRA pixels, the byte order both a Wayland
-//! ARGB8888 buffer and a Windows layered window take; only showing them differs by system.
+//! The pill is drawn here into premultiplied BGRA pixels, the byte order a Wayland ARGB8888
+//! buffer, a Windows layered window and a macOS CGImage all take; only showing them differs.
 
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
@@ -60,10 +60,10 @@ pub fn wanted() -> bool {
     }
     #[cfg(target_os = "linux")]
     return env::var_os("WAYLAND_DISPLAY").is_some();
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     return true;
-    // ponytail: no pill on macOS or X11; the notification and sounds carry it there
-    #[cfg(not(any(target_os = "linux", windows)))]
+    // ponytail: no pill on X11; the notification and sounds carry it there
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
     return false;
 }
 
@@ -99,8 +99,10 @@ pub fn run() -> Res {
     let done = wayland::run();
     #[cfg(windows)]
     let done = crate::overlay_win::run();
-    #[cfg(not(any(target_os = "linux", windows)))]
-    let done: Res = Err("the on-screen pill works on Wayland and Windows; `rookey status --follow` works everywhere".into());
+    #[cfg(target_os = "macos")]
+    let done = crate::overlay_mac::run();
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+    let done: Res = Err("the on-screen pill works on Wayland, Windows and macOS; `rookey status --follow` works everywhere".into());
     let _ = fs::remove_file(pidfile());
     done
 }

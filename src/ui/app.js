@@ -902,10 +902,9 @@ function Hotkey() {
 
       ${toggle("sounds", t("sounds"), t("sounds.about"), () => !isOn(values().ROOKEY_QUIET), (e) =>
         save({ ROOKEY_QUIET: e.target.checked ? "" : "1" }))}
-      ${() => (ui.s.os === "macos" ? "" : html`
       ${toggle("overlay", t("overlay"), tx("overlay.about", { cmd: code("rookey status --follow") }), () => !isOn(values().ROOKEY_NO_OVERLAY), (e) =>
         save({ ROOKEY_NO_OVERLAY: e.target.checked ? "" : "1" }))}
-      ${() => (isOn(values().ROOKEY_NO_OVERLAY) ? "" : PillStyle())}`)}
+      ${() => (isOn(values().ROOKEY_NO_OVERLAY) ? "" : PillStyle())}
       ${toggle("notifications", t("notifications"), t("notifications.about"), () => !isOn(values().ROOKEY_NO_NOTIFICATIONS), (e) =>
         save({ ROOKEY_NO_NOTIFICATIONS: e.target.checked ? "" : "1" }))}
     </section>`;

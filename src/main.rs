@@ -61,6 +61,8 @@ mod listen;
 mod listen;
 mod models;
 mod overlay;
+#[cfg(target_os = "macos")]
+mod overlay_mac;
 #[cfg(windows)]
 mod overlay_win;
 mod reader;
