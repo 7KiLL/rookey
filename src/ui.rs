@@ -17,12 +17,13 @@ use serde_json::{Map, Value, json};
 use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader, sound, update};
 
 /// The settings the page may change. Keys are not among them, they have a file of their own.
-const SETTINGS: [&str; 24] = [
+const SETTINGS: [&str; 25] = [
     "ROOKEY_BACKEND",
     "ROOKEY_LANG",
     "ROOKEY_MODEL",
     "ROOKEY_SANITIZE",
     "ROOKEY_EDIT",
+    "ROOKEY_EDIT_CUSTOM", // the page's own: your instruction, kept while a preset is on
     "ROOKEY_CONTEXT",
     "ROOKEY_READER",
     "ROOKEY_QUIET",
@@ -945,7 +946,7 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
             "ROOKEY_UI_LANG" if !value.is_empty() && !UI_LANGS.contains(&value.as_str()) => {
                 return Err(format!("The page isn't written in {value}.").into());
             }
-            "ROOKEY_EDIT" if value.chars().count() > MAX_EDIT => {
+            "ROOKEY_EDIT" | "ROOKEY_EDIT_CUSTOM" if value.chars().count() > MAX_EDIT => {
                 return Err(format!(
                     "The rewrite instruction is {} characters long, ElevenLabs takes {MAX_EDIT}.",
                     value.chars().count()
@@ -1326,6 +1327,10 @@ PATH=/tmp"}"#] {
         let ok = changes(br#"{"ROOKEY_EDIT": " one\ntwo ", "ROOKEY_BACKEND": ""}"#).unwrap();
         assert!(ok.contains(&change("ROOKEY_EDIT", "one two")));
         assert!(ok.contains(&change("ROOKEY_BACKEND", "")));
+        // the kept instruction of your own goes by the same rules as the one in use
+        assert!(changes(format!(r#"{{"ROOKEY_EDIT_CUSTOM": "{}"}}"#, "x".repeat(2001)).as_bytes()).is_err());
+        let both = changes(br#"{"ROOKEY_EDIT": "", "ROOKEY_EDIT_CUSTOM": " mine\nhere "}"#).unwrap();
+        assert!(both.contains(&change("ROOKEY_EDIT_CUSTOM", "mine here")) && both.contains(&change("ROOKEY_EDIT", "")));
         assert!(same("abc", "abc") && !same("abc", "abd") && !same("abc", "ab"));
     }
 
