@@ -27,6 +27,7 @@ cargo test --release                                               # CPU
 | `src/listen.rs`, `src/listen_win.rs` | `rookey listen`: evdev and a systemd user service on Linux, the key state and the Run key on Windows. Same functions in both |
 | `src/status.rs` | What rookey is doing now: the status file every recording writes, and `rookey status [--json\|--waybar] [--follow]` for bars |
 | `src/overlay.rs`, `src/overlay_win.rs` | `rookey overlay`: the pill on screen, drawn into pixels here; layer shell on Wayland, a layered window on Windows. Its fonts in `src/overlay/` are the page's, cut down (see the comment in overlay.rs) |
+| `src/history.rs` | The last transcripts, JSON lines in `<data_dir>/rookey/history`, and `rookey history [--clear]` |
 | `src/sound.rs` | The cues (start, stop, typed, failed): three synthesized sets played through cpal, or a user's file through the system player |
 | `src/win.rs` | The Windows calls: typing (SendInput), a key's state, whether a pid runs |
 | `install.sh`, `install.ps1` | Install the release build and nothing else; the model is picked in `rookey setup` |

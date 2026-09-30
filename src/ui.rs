@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader, sound};
 
 /// The settings the page may change. Keys are not among them, they have a file of their own.
-const SETTINGS: [&str; 19] = [
+const SETTINGS: [&str; 20] = [
     "ROOKEY_BACKEND",
     "ROOKEY_LANG",
     "ROOKEY_MODEL",
@@ -35,6 +35,7 @@ const SETTINGS: [&str; 19] = [
     "ROOKEY_NO_NOTIFICATIONS",
     "ROOKEY_NO_OVERLAY",
     "ROOKEY_PILL", // its look: full, compact or dot
+    "ROOKEY_HISTORY", // 0 keeps no history, empty keeps it
     // the settings page's own look; empty follows the system and the browser
     "ROOKEY_UI_THEME",
     "ROOKEY_UI_LANG",
@@ -208,6 +209,7 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
         ("GET", "/api/alive") => return alive(stream),
         ("GET", "/api/state") => Ok(state_after_listening()),
         // what changes by itself, asked for often while it does
+        ("GET", "/api/history") => Ok(history()),
         ("GET", "/api/progress") => Ok(json!({ "download": models::download_state(), "trial": trial() })),
         ("POST", "/api/save") => match changes(&req.body) {
             Ok(changes) => config_path()
@@ -223,6 +225,10 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
                 "/api/hotkey" => hotkey(&asked),
                 "/api/try" => try_it(&asked).map(|()| json!({ "trial": trial() })),
                 "/api/sound" => play(&asked).map(|()| json!({})),
+                "/api/history" if asked["clear"] == true => crate::history::path()
+                    .map_or(Ok(()), |p| crate::history::clear(&p))
+                    .map_err(|e| format!("Can't clear the history: {e}").into())
+                    .map(|()| history()),
                 _ => return error(stream, "404 Not Found", "No such thing here."),
             },
             Err(e) => return error(stream, "400 Bad Request", &e.to_string()),
@@ -245,6 +251,14 @@ fn play(asked: &Value) -> Res<()> {
     sound::play(cue, get);
     sound::wait();
     Ok(())
+}
+
+/// The transcripts kept on this computer, newest first, and where they are.
+fn history() -> Value {
+    let path = crate::history::path();
+    let mut entries = path.as_deref().map(crate::history::read).unwrap_or_default();
+    entries.reverse();
+    json!({ "entries": entries, "path": path.as_deref().map(tilde), "keep": crate::history::KEEP })
 }
 
 /// Compares in constant time, so the token can't be guessed a character at a time.
@@ -582,6 +596,9 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
             "ROOKEY_QUIET" | "ROOKEY_NO_NOTIFICATIONS" | "ROOKEY_NO_OVERLAY" if !matches!(value.as_str(), "" | "1") => {
                 return Err(format!("{key} is a switch, 1 or nothing.").into());
             }
+            "ROOKEY_HISTORY" if !matches!(value.as_str(), "" | "0") => {
+                return Err("ROOKEY_HISTORY is 0 to keep no history, or nothing to keep it.".into());
+            }
             "ROOKEY_PILL" if !value.is_empty() && !crate::overlay::STYLES.contains(&value.as_str()) => {
                 return Err(format!("The pill comes as {}, not {value}.", crate::overlay::STYLES.join(", ")).into());
             }
@@ -819,7 +836,7 @@ fn write(path: &Path, changes: &[(String, String)]) -> Res<()> {
 }
 
 /// Replaces the file in one step, readable by its owner only: it may hold API keys.
-fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
+pub fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -918,6 +935,8 @@ mod tests {
         assert!(changes(br#"{"ROOKEY_NO_OVERLAY": "yes please"}"#).is_err());
         assert!(changes(br#"{"ROOKEY_SOUNDS": "kazoo"}"#).is_err());
         assert!(changes(br#"{"ROOKEY_PILL": "hexagon"}"#).is_err());
+        assert!(changes(br#"{"ROOKEY_HISTORY": "1"}"#).is_err()); // on is the default, and empty
+        assert_eq!(changes(br#"{"ROOKEY_HISTORY": " 0 "}"#).unwrap(), [change("ROOKEY_HISTORY", "0")]);
         assert_eq!(changes(br#"{"ROOKEY_PILL": "dot"}"#).unwrap(), [change("ROOKEY_PILL", "dot")]);
         assert_eq!(changes(br#"{"ROOKEY_SOUNDS": "pencil"}"#).unwrap(), [change("ROOKEY_SOUNDS", "pencil")]);
         assert!(changes(br#"{"ROOKEY_SOUND_START": "/no/such/caw.wav"}"#).is_err());

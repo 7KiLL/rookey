@@ -56,6 +56,7 @@ const ui = reactive({
   edit: null, // the rewriting instruction while it is typed, before it is saved
   provider: null, // { id, where: "engine" | "keys", doing: "edit" | "remove" }
   hotkey: { way: null, editing: false, chord: null, file: null, files: false, taken: null, problem: "", pressing: false },
+  history: { entries: [], path: "", keep: 0, all: false, clearing: false }, // entries newest first
 });
 
 /** Theme and language go on <html>: CSS picks the tokens, the browser the hyphenation. */
@@ -170,8 +171,8 @@ function termsMode() {
 /** The picked languages, "en,uk" as ["en", "uk"]; none picked means any. */
 const languages = () => (values().ROOKEY_LANG || "").split(",").filter((l) => l && l !== "auto");
 
-/** A button that copies, and says so for a moment. */
-function copyButton(text) {
+/** A button that copies, and says so for a moment. `label` names it where several sit together. */
+function copyButton(text, label = false) {
   const b = reactive({ label: "copy" });
   const copy = async () => {
     try {
@@ -182,7 +183,7 @@ function copyButton(text) {
     }
     setTimeout(() => (b.label = "copy"), 2000);
   };
-  return html`<button type="button" class="button" @click="${copy}">${() => t(b.label)}</button>`;
+  return html`<button type="button" class="button" aria-label="${label}" @click="${copy}">${() => t(b.label)}</button>`;
 }
 
 const focus = (selector) => nextTick(() => $(selector)?.focus());
@@ -242,7 +243,7 @@ function Header() {
 }
 
 function Settings() {
-  return html`${Checks()}${Engine()}${Languages()}${Cleanup()}${Hotkey()}${Advanced()}`;
+  return html`${Checks()}${Engine()}${Languages()}${Cleanup()}${Hotkey()}${History()}${Advanced()}`;
 }
 
 /** A setting the shell overrides, noted next to it. */
@@ -911,6 +912,66 @@ function ManualHotkey() {
     </div>`;
 }
 
+// ---- history ---------------------------------------------------------------
+
+const HISTORY_FIRST = 10; // shown before "Show all"
+
+/** What was said lately, from the server. A list that hasn't changed isn't drawn again. */
+async function loadHistory() {
+  if (ui.stopped) return;
+  try {
+    merge(ui.history, await call("/api/history"), false);
+  } catch {
+    // a stopped server is said at the top already
+  }
+}
+
+function History() {
+  const h = ui.history;
+  const on = () => !["0", "false"].includes(values().ROOKEY_HISTORY);
+  const shown = () => (h.all ? h.entries : h.entries.slice(0, HISTORY_FIRST));
+  const clear = async () => {
+    h.clearing = false;
+    const reply = await send("/api/history", { clear: true });
+    if (reply) {
+      merge(h, reply, false);
+      say("history.s.cleared");
+    }
+  };
+  return html`
+    <section class="group" id="history" aria-labelledby="history-title">
+      <h2 id="history-title">${t("history.title")}</h2>
+      <p class="about">${() => tx("history.about", { keep: h.keep, path: code(h.path) })}</p>
+      ${toggle("history-on", t("history.keep"), t("history.keep.about"), on, (e) => save({ ROOKEY_HISTORY: e.target.checked ? "" : "0" }))}
+      ${shell("ROOKEY_HISTORY")}
+      <p class="hint" hidden="${() => h.entries.length > 0}">${t("history.empty")}</p>
+      <ul class="rows history" aria-labelledby="history-title">${() => shown().map(HistoryRow)}</ul>
+      <div class="actions" hidden="${() => h.entries.length === 0 || h.clearing}">
+        <button type="button" class="button" hidden="${() => h.all || h.entries.length <= HISTORY_FIRST}" @click="${() => (h.all = true)}">${() =>
+          t("history.all", { n: h.entries.length })}</button>
+        <button type="button" class="button" @click="${() => ((h.clearing = true), focus("#history-keep"))}">${t("history.clear")}</button>
+      </div>
+      <div class="actions" hidden="${() => !h.clearing}">
+        <p class="confirm-text">${t("history.confirm")}</p>
+        <button type="button" class="button is-danger" @click="${clear}">${t("history.clear.yes")}</button>
+        <button type="button" class="button" id="history-keep" @click="${() => (h.clearing = false)}">${t("history.clear.no")}</button>
+      </div>
+    </section>`;
+}
+
+function HistoryRow(entry) {
+  const at = new Date(entry.at);
+  const when = at.toLocaleString(ui.lang, { dateStyle: "medium", timeStyle: "short" });
+  return html`
+    <li class="row">
+      <span class="row-text">
+        <time class="choice-about" datetime="${at.toISOString()}">${when}</time>
+        <span class="history-text">${entry.text}</span>
+      </span>
+      <span class="actions">${copyButton(() => entry.text, t("history.copy", { time: when }))}</span>
+    </li>`;
+}
+
 // ---- the example sentence and the voice test -----------------------------
 
 function Specimen() {
@@ -1063,6 +1124,9 @@ async function start() {
   }
   say("status.saved-as-you-go", { path: ui.s.path });
   watch();
+  // dictated in another window: the list is fresh when you come back
+  loadHistory();
+  window.addEventListener("focus", loadHistory);
 
   // Held open so `rookey ui` can tell when this page is closed, and the page when rookey ui is.
   const line = new EventSource(`/api/alive?t=${encodeURIComponent(token)}`);
