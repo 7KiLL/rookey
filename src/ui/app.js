@@ -54,6 +54,7 @@ const ui = reactive({
   otherLanguage: false,
   desktop: null,
   edit: null, // the rewriting instruction while it is typed, before it is saved
+  editCustom: false, // Custom picked, even with no instruction of your own yet
   provider: null, // { id, where: "engine" | "keys", doing: "edit" | "remove" }
   hotkey: { way: null, editing: false, chord: null, file: null, files: false, taken: null, problem: "", pressing: false },
   history: { entries: [], path: "", keep: 0, all: false, clearing: false }, // entries newest first
@@ -148,6 +149,16 @@ const PILL_STYLES = ["full", "compact", "dot"]; // overlay::STYLES, the first is
 // ROOKEY_PILL_AT, in percent of the room the pill has; bottom is overlay::DEFAULT_AT
 const PILL_PLACES = { "top-left": [0, 0], top: [50, 0], "top-right": [100, 0], "bottom-left": [0, 100], bottom: [50, 100], "bottom-right": [100, 100] };
 const CUES = ["start", "stop", "typed", "failed"];
+// ROOKEY_EDIT holds the instruction itself, so a preset is known by its exact text. The text
+// goes to the model as it is, in English whatever the page's language.
+const EDITS = {
+  punctuation: "Fix the punctuation and capitalisation only. Keep every word as it was said, in its language.",
+  clean: "Remove filler words, false starts and repeated words, and fix the grammar. Keep the meaning, the tone and the language.",
+  formal: "Rewrite this in a clear, formal tone, in full sentences. Keep the meaning and the language.",
+  brief: "Make this shorter and more direct. Keep the meaning, the key details and the language.",
+};
+const editMode = () =>
+  ui.editCustom ? "custom" : values().ROOKEY_EDIT ? (Object.keys(EDITS).find((id) => EDITS[id] === values().ROOKEY_EDIT) ?? "custom") : "off";
 const soundSet = () => (SOUND_SETS.includes(values().ROOKEY_SOUNDS) ? values().ROOKEY_SOUNDS : SOUND_SETS[0]);
 const hasKey = (id) => provider(id).saved || provider(id).env;
 const number = (n, digits = 0) => n.toLocaleString(ui.lang, { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -311,9 +322,9 @@ function choice(name, value, checked, title, about, change, disabled = false) {
     </label>`;
 }
 
-function chip(type, name, value, checked, text, change) {
-  [checked, text] = [checked, text].map(live);
-  return html`<label class="chip"><input type="${type}" name="${name}" value="${value}" checked="${checked}" @change="${change}"><span>${text}</span></label>`;
+function chip(type, name, value, checked, text, change, disabled = false) {
+  [checked, text, disabled] = [checked, text, disabled].map(live);
+  return html`<label class="chip"><input type="${type}" name="${name}" value="${value}" checked="${checked}" disabled="${disabled}" @change="${change}"><span>${text}</span></label>`;
 }
 
 // ---- setup check -----------------------------------------------------------
@@ -672,6 +683,16 @@ function Advanced() {
     if (ui.advanced !== isOn(values().ROOKEY_UI_ADVANCED)) save({ ROOKEY_UI_ADVANCED: ui.advanced ? "1" : "" });
   };
   const editText = () => ui.edit ?? values().ROOKEY_EDIT;
+  // your own text is kept in ROOKEY_EDIT_CUSTOM while a preset or Off is on, and comes back with Custom
+  const pickEdit = (id) => async () => {
+    // text of your own that isn't kept yet, typed or from before there were presets, is kept now
+    const typed = editText();
+    const keep = editMode() === "custom" && typed !== values().ROOKEY_EDIT_CUSTOM ? { ROOKEY_EDIT_CUSTOM: typed } : {};
+    ui.edit = null;
+    ui.editCustom = id === "custom";
+    if (id === "custom") return (await save({ ROOKEY_EDIT: values().ROOKEY_EDIT_CUSTOM })) && focus("#edit");
+    save({ ROOKEY_EDIT: EDITS[id] ?? "", ...keep });
+  };
   return html`
     <details class="group advanced" id="advanced" open="${() => ui.advanced}" @toggle="${toggled}">
       <summary>
@@ -684,11 +705,19 @@ function Advanced() {
       ${Models()}
 
       <div class="${() => (cloud() ? "sub" : "sub is-off")}" id="edit-field">
-        <h3><label for="edit">${t("edit.title")}</label></h3>
-        <textarea id="edit" rows="3" maxlength="2000" placeholder="${t("edit.placeholder")}" disabled="${() => !cloud()}"
-          .value="${editText}" @input="${(e) => (ui.edit = e.target.value)}"
-          @change="${async (e) => (await save({ ROOKEY_EDIT: e.target.value })) && (ui.edit = null)}"></textarea>
-        <p class="hint">${() => t(cloud() ? "edit.cloud" : "edit.local")}</p>
+        <h3 id="edit-title">${t("edit.title")}</h3>
+        <div class="chips" role="radiogroup" aria-labelledby="edit-title">
+          ${["off", ...Object.keys(EDITS), "custom"].map((id) =>
+            chip("radio", "edit-mode", id, () => editMode() === id, t(`edit.${id}`), pickEdit(id), () => !cloud()))}
+        </div>
+        <p class="hint">${() => t(`edit.${editMode()}.about`)}</p>
+        <div class="field" hidden="${() => editMode() !== "custom"}">
+          <label class="visually-hidden" for="edit">${t("edit.custom.label")}</label>
+          <textarea id="edit" rows="3" maxlength="2000" placeholder="${t("edit.placeholder")}" disabled="${() => !cloud()}"
+            .value="${editText}" @input="${(e) => (ui.edit = e.target.value)}"
+            @change="${async (e) => (ui.editCustom = true) && (await save({ ROOKEY_EDIT: e.target.value, ROOKEY_EDIT_CUSTOM: e.target.value })) && (ui.edit = null)}"></textarea>
+        </div>
+        <p class="hint" hidden="${() => cloud() && editMode() === "off"}">${() => t(cloud() ? "edit.cloud" : "edit.local")}</p>
         ${shell("ROOKEY_EDIT")}
       </div>
 
