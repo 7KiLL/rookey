@@ -215,17 +215,27 @@ fn fresh_typing() -> bool {
 }
 
 /// Waits for keys to be pressed, like on Linux and Windows: a modifier alone counts as it goes
-/// up with nothing pressed in between. None for Esc or once `wait` is over. The page's server
-/// runs in the terminal, so this asks Rookey, which is what the keys are allowed to.
+/// up with nothing pressed in between. None for Esc or once `wait` is over. Always in a new
+/// process that is Rookey's: the page's server keeps the Accessibility answer it got first,
+/// and asked forever after it was allowed.
 pub fn capture(wait: Duration) -> Res<Option<String>> {
-    if !mac::is_app() {
-        let printed = mac::as_app(&["__capture", &wait.as_secs().to_string()], Some(wait + Duration::from_secs(5)))?;
-        let answer: serde_json::Value = serde_json::from_str(printed.trim()).map_err(|_| "Rookey didn't answer with the keys")?;
-        if let Some(why) = answer["error"].as_str() {
-            return Err(why.into());
-        }
-        return Ok(answer["captured"].as_str().map(str::to_string));
+    let seconds = wait.as_secs().to_string();
+    let printed = if mac::is_app() {
+        let out = Command::new(crate::exe()?).args(["__capture", &seconds]).output()?;
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    } else {
+        // the page runs in the terminal (ROOKEY_IN_TERMINAL): Rookey is asked all the same
+        mac::as_app(&["__capture", &seconds], Some(wait + Duration::from_secs(5)))?
+    };
+    let answer: serde_json::Value = serde_json::from_str(printed.trim()).map_err(|_| "Rookey didn't answer with the keys")?;
+    if let Some(why) = answer["error"].as_str() {
+        return Err(why.into());
     }
+    Ok(answer["captured"].as_str().map(str::to_string))
+}
+
+/// `capture`, in the process that listens.
+fn capture_now(wait: Duration) -> Res<Option<String>> {
     if !mac::typing() {
         mac::ask_typing();
         return Err("macOS doesn't let Rookey see the keys yet. Turn it on under Privacy & Security > Accessibility, then set the keys again.".into());
@@ -274,7 +284,7 @@ pub fn capture(wait: Duration) -> Res<Option<String>> {
 /// `rookey __capture <seconds>`, run as Rookey: the keys as JSON on stdout for `capture`.
 pub fn capture_here(args: &[String]) -> Res<()> {
     let wait = Duration::from_secs(args.first().and_then(|s| s.parse().ok()).unwrap_or(10));
-    let answer = match capture(wait) {
+    let answer = match capture_now(wait) {
         Ok(keys) => serde_json::json!({ "captured": keys }),
         Err(e) => serde_json::json!({ "error": e.to_string() }),
     };
