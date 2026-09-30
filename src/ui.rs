@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader, sound};
 
 /// The settings the page may change. Keys are not among them, they have a file of their own.
-const SETTINGS: [&str; 20] = [
+const SETTINGS: [&str; 22] = [
     "ROOKEY_BACKEND",
     "ROOKEY_LANG",
     "ROOKEY_MODEL",
@@ -36,6 +36,8 @@ const SETTINGS: [&str; 20] = [
     "ROOKEY_NO_OVERLAY",
     "ROOKEY_PILL", // its look: full, compact or dot
     "ROOKEY_HISTORY", // 0 keeps no history, empty keeps it
+    "ROOKEY_WORDS", // your own names and jargon, comma-separated
+    "ROOKEY_KEEP_CLIPBOARD", // macOS: puts the clipboard back after a paste; on unless 0
     // the settings page's own look; empty follows the system and the browser
     "ROOKEY_UI_THEME",
     "ROOKEY_UI_LANG",
@@ -72,6 +74,10 @@ const PROVIDERS: [(&str, &str, &str, &str, &str); 3] = [
 ];
 const MAX_REQUEST: u64 = 64 * 1024;
 const MAX_EDIT: usize = 2000; // ElevenLabs' limit for transcript_edit
+// ElevenLabs takes keyterms under 50 characters and up to 5 words each; past 100 terms it
+// bills a 20 s minimum, and realtime takes only 50 of 20 characters (longer ones are left out)
+const MAX_WORDS: usize = 100;
+const MAX_WORD: usize = 49;
 const WOFF2: &str = "font/woff2";
 
 /// (path, content type, body), all baked into the binary: the page looks the same anywhere.
@@ -417,6 +423,7 @@ fn state() -> Value {
         "hotkey": desktop::hotkey(),
         "listen": listening(&get),
         "trial": trial(),
+        "os": env::consts::OS,
     })
 }
 
@@ -626,6 +633,27 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
                     value.chars().count()
                 )
                 .into());
+            }
+            "ROOKEY_WORDS" => {
+                let mut words: Vec<&str> = Vec::new();
+                for word in value.split(',').map(str::trim).filter(|w| !w.is_empty()) {
+                    if word.chars().count() > MAX_WORD || word.split_whitespace().count() > 5 {
+                        return Err(format!("\"{word}\" is too long, a word or name takes up to 5 words and {MAX_WORD} characters.").into());
+                    }
+                    if word.contains(['<', '>', '{', '}', '[', ']', '\\']) {
+                        return Err(format!("\"{word}\" has a bracket or a backslash, the engines leave those out.").into());
+                    }
+                    if !words.contains(&word) {
+                        words.push(word);
+                    }
+                }
+                if words.len() > MAX_WORDS {
+                    return Err(format!("That's {} words, rookey takes {MAX_WORDS}.", words.len()).into());
+                }
+                value = words.join(",");
+            }
+            "ROOKEY_KEEP_CLIPBOARD" if !matches!(value.as_str(), "" | "0" | "1") => {
+                return Err(format!("{key} is on by default, 0 turns it off.").into());
             }
             // rookey opens this path as it is, and only a shell knows what ~ means
             "ROOKEY_MODEL" if value.starts_with("~/") => {
@@ -918,6 +946,20 @@ mod tests {
             let text = update_config("", &[change("ROOKEY_EDIT", value)]);
             assert_eq!(parse_config(&text)["ROOKEY_EDIT"], value, "{text}");
         }
+    }
+
+    #[test]
+    fn words_and_clipboard_are_checked() {
+        let words = |v: &str| changes(format!(r#"{{"ROOKEY_WORDS": {}}}"#, serde_json::to_string(v).unwrap()).as_bytes());
+        assert_eq!(words(" rookey, Kyiv\nOblast ,,rookey").unwrap(), [change("ROOKEY_WORDS", "rookey,Kyiv Oblast")]);
+        assert_eq!(words("").unwrap(), [change("ROOKEY_WORDS", "")]);
+        assert!(words(&"x".repeat(50)).is_err());
+        assert!(words("one two three four five six").is_err());
+        assert!(words("a[b]").is_err());
+        assert!(words(&(0..101).map(|n| format!("w{n}")).collect::<Vec<_>>().join(",")).is_err());
+        assert!(words(&(0..100).map(|n| format!("w{n}")).collect::<Vec<_>>().join(",")).is_ok());
+        assert_eq!(changes(br#"{"ROOKEY_KEEP_CLIPBOARD": "0"}"#).unwrap(), [change("ROOKEY_KEEP_CLIPBOARD", "0")]);
+        assert!(changes(br#"{"ROOKEY_KEEP_CLIPBOARD": "yes"}"#).is_err());
     }
 
     #[test]

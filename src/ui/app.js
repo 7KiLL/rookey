@@ -243,7 +243,7 @@ function Header() {
 }
 
 function Settings() {
-  return html`${Checks()}${Engine()}${Languages()}${Cleanup()}${Hotkey()}${History()}${Advanced()}`;
+  return html`${Checks()}${Engine()}${Languages()}${Cleanup()}${Words()}${Hotkey()}${History()}${Advanced()}`;
 }
 
 /** A setting the shell overrides, noted next to it. */
@@ -501,6 +501,41 @@ function Cleanup() {
     </section>`;
 }
 
+// ---- your words -------------------------------------------------------------
+
+const words = () => (values().ROOKEY_WORDS || "").split(",").filter(Boolean);
+
+function Words() {
+  const draft = reactive({ text: "" });
+  const add = async (e) => {
+    e.preventDefault();
+    const typed = draft.text.split(",").map((w) => w.trim()).filter((w) => w && !words().includes(w));
+    if (typed.length === 0) return focus("#word");
+    if (await save({ ROOKEY_WORDS: [...words(), ...typed].join(",") })) draft.text = "";
+    focus("#word");
+  };
+  const remove = (word) => () => save({ ROOKEY_WORDS: words().filter((w) => w !== word).join(",") });
+  return html`
+    <section class="group" aria-labelledby="words-title">
+      <h2 id="words-title">${t("words.title")}</h2>
+      <p class="about">${t("words.about")}</p>
+      <ul class="words" aria-labelledby="words-title" hidden="${() => words().length === 0}">
+        ${() => words().map((w) => html`<li><button type="button" class="word" aria-label="${t("words.remove", { word: w })}" @click="${remove(w)}"><span>${w}</span><span class="word-x" aria-hidden="true">×</span></button></li>`)}
+      </ul>
+      <form class="field" @submit="${add}">
+        <label for="word">${t("words.add")}</label>
+        <div class="with-button">
+          <input class="typed-input" id="word" type="text" spellcheck="false" autocomplete="off" maxlength="200" placeholder="${t("words.placeholder")}"
+            .value="${() => draft.text}" @input="${(e) => (draft.text = e.target.value)}">
+          <button type="submit" class="button">${t("words.add.button")}</button>
+        </div>
+        <p class="hint">${t("words.hint")}</p>
+      </form>
+      <p class="hint">${() => (cloud() ? t("words.cloud") : t("words.local"))}</p>
+      ${shell("ROOKEY_WORDS")}
+    </section>`;
+}
+
 /** "OpenAI needs a key" with the way to the place where keys go. */
 function needsKey(id) {
   const open = () => {
@@ -564,6 +599,8 @@ function Advanced() {
 
       ${Sounds()}
 
+      ${() => (ui.s.os === "macos" ? Clipboard() : "")}
+
       <div class="sub" id="providers">
         <h3 id="providers-title">${t("keys.title")}</h3>
         <p class="about">${t("keys.about")}</p>
@@ -614,6 +651,17 @@ function Sounds() {
       </ul>
       <p class="hint">${t("sounds.files")}</p>
       ${shell("ROOKEY_SOUNDS")}
+    </div>`;
+}
+
+/** macOS types by pasting: whether the clipboard is put back afterwards. On unless 0. */
+function Clipboard() {
+  return html`
+    <div class="sub" id="clipboard-field">
+      <h3>${t("clipboard.title")}</h3>
+      ${toggle("keep-clipboard", t("clipboard"), t("clipboard.about"), () => values().ROOKEY_KEEP_CLIPBOARD !== "0", (e) =>
+        save({ ROOKEY_KEEP_CLIPBOARD: e.target.checked ? "" : "0" }))}
+      ${shell("ROOKEY_KEEP_CLIPBOARD")}
     </div>`;
 }
 

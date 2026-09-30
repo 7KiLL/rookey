@@ -89,11 +89,13 @@ ANTHROPIC_API_KEY=sk-ant-...
 | `ROOKEY_MODEL` | path to the ggml model (local backend) |
 | `ROOKEY_SANITIZE=1` | drops filler words, false starts and non-speech sounds (Scribe `no_verbatim`, no extra cost). Whisper skips most of those anyway, so on `local` it only mutes non-speech tokens |
 | `ROOKEY_EDIT=<instruction>` | free-form cleanup of the final transcript (Scribe `transcript_edit`, costs extra, experimental on realtime). ElevenLabs backends only. If the edit fails you get the transcript as it was |
+| `ROOKEY_WORDS=<a,b,c>` | your own names and jargon, comma-separated, always passed along: Scribe `keyterms` (costs extra; realtime takes the first 50 of up to 20 characters), whisper's initial prompt on `local`. They go first, before any screen terms |
 | `ROOKEY_CONTEXT=1` | reads the screen when recording starts; the terms found on it bias the recognizer (Scribe `keyterms`, costs extra; whisper's initial prompt on `local`) |
 | `ROOKEY_CONTEXT=<command>` | same, with the text taken from your command's stdout |
 | `ROOKEY_READER` | who reads the screenshot: `ocr` (default, tesseract on this machine), `openai`, `anthropic` |
 | `ROOKEY_READER_MODEL` | the vision model, if not `gpt-6-luna` or `claude-opus-5-5` |
 | `ROOKEY_SCREENSHOT=<command>` | a command that prints the image, instead of `grim` |
+| `ROOKEY_KEEP_CLIPBOARD=0` | macOS types by pasting; by default the clipboard's text is put back 300 ms after. `0` leaves the typed text on it |
 
 ### Screen terms
 
