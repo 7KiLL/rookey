@@ -24,17 +24,17 @@ cargo test --release                                               # CPU
 | `src/models.rs` | Whisper model catalog, finding installed models, downloads |
 | `src/desktop.rs` | Hotkeys: detects niri or Hyprland, edits their config safely, validates with the compositor itself |
 | `src/hold.rs` | Hold to talk, tap to keep talking: the key logic both listeners share |
-| `src/listen.rs`, `src/listen_win.rs` | `rookey listen`: evdev and a systemd user service on Linux, the key state and the Run key on Windows. Same functions in both |
+| `src/listen.rs`, `src/listen_win.rs`, `src/listen_mac.rs` | `rookey listen`: evdev and a systemd user service on Linux, the key state and the Run key on Windows, a keyboard tap and a launchd agent on macOS. Same functions in all three |
 | `src/status.rs` | What rookey is doing now: the status file every recording writes, and `rookey status [--json\|--waybar] [--follow]` for bars |
 | `src/overlay.rs`, `src/overlay_win.rs` | `rookey overlay`: the pill on screen, drawn into pixels here; layer shell on Wayland, a layered window on Windows. Its fonts in `src/overlay/` are the page's, cut down (see the comment in overlay.rs) |
 | `src/history.rs` | The last transcripts, JSON lines in `<data_dir>/rookey/history`, and `rookey history [--clear]` |
 | `src/sound.rs` | The cues (start, stop, typed, failed): three synthesized sets played through cpal, or a user's file through the system player |
 | `src/update.rs` | `rookey update` and the daily background check: GitHub's latest release, this build's archive, SHA256SUMS, the swap next to the running binary |
 | `src/win.rs` | The Windows calls: typing (SendInput), a key's state, whether a pid runs |
-| `src/mac.rs` | The macOS privacy switches (microphone, screen recording, Accessibility, Automation of System Events), read and asked for. macOS files them under the responsible app: the terminal, or the hotkey app, never rookey |
+| `src/mac.rs` | The macOS privacy switches (microphone, screen recording, Accessibility, Automation of System Events), read and asked for, and the keyboard tap. macOS files them under the responsible app: the terminal, the hotkey app, or *Rookey* (`io.github.7kill.rookey`), a copy of rookey in `<data_dir>/rookey/Rookey.app` that `rookey listen` runs from under launchd. The page reads Rookey's switches by running `rookey __access` as Rookey; a switch read in the same process never changes |
 | `install.sh`, `install.ps1` | Install the release build and nothing else; the model is picked in `rookey setup` |
 | `.github/workflows/release.yml`, `cliff.toml` | A `v*` tag builds every archive and writes the notes from Conventional Commits |
-| `window/` | `rookey-window`, a workspace member of its own: the page in a wry webview window. `rookey ui` starts it from beside its binary and falls back to the browser. Only it links WebKitGTK/WebView2, never `rookey`. On macOS it copies itself into `~/Library/Caches/rookey/Rookey Settings.app` and runs from there, for the Dock's name and icon (`window/macos/`); the bundle id `io.github.7kill.rookey` stays fixed Built and tested apart: `cargo build --release -p rookey-window`, `cargo test --release -p rookey-window` |
+| `window/` | `rookey-window`, a workspace member of its own: the page in a wry webview window. `rookey ui` starts it from beside its binary and falls back to the browser. Only it links WebKitGTK/WebView2, never `rookey`. On macOS it copies itself into `~/Library/Caches/rookey/Rookey Settings.app` and runs from there, for the Dock's name and icon (`window/macos/`); the bundle id `io.github.7kill.rookey.settings` stays fixed. Built and tested apart: `cargo build --release -p rookey-window`, `cargo test --release -p rookey-window` |
 | `src/ui.rs` | The `rookey ui` HTTP server: token, routes, state for the page, input checks, setup checks |
 | `src/ui/` | The page: `app.js` (arrow.js templates), `i18n.js` (every word, per language), `app.css`, the vendored `arrow.js`, fonts and icon, baked in with `include_bytes!` |
 

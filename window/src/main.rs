@@ -186,7 +186,7 @@ mod bundle {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleIdentifier</key><string>io.github.7kill.rookey</string>
+  <key>CFBundleIdentifier</key><string>io.github.7kill.rookey.settings</string>
   <key>CFBundleName</key><string>Rookey Settings</string>
   <key>CFBundleDisplayName</key><string>Rookey Settings</string>
   <key>CFBundleExecutable</key><string>rookey-window</string>

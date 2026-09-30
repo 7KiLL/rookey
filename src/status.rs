@@ -82,11 +82,7 @@ pub fn read() -> Option<Value> {
 }
 
 fn running(pid: u32) -> bool {
-    #[cfg(any(target_os = "linux", windows))]
-    return crate::alive(pid);
-    // ponytail: macOS trusts the file; a crashed recording shows until the next one
-    #[cfg(not(any(target_os = "linux", windows)))]
-    return pid > 0;
+    crate::alive(pid)
 }
 
 /// What is true at `now`, from the file: `{"state": "listening", "seconds": 4, "level": 0.41}`.

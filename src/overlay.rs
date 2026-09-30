@@ -72,10 +72,7 @@ fn pidfile() -> std::path::PathBuf {
 }
 
 fn showing() -> bool {
-    #[cfg(any(target_os = "linux", windows))]
-    return fs::read_to_string(pidfile()).ok().and_then(|p| p.trim().parse().ok()).is_some_and(crate::alive);
-    #[cfg(not(any(target_os = "linux", windows)))]
-    return false;
+    fs::read_to_string(pidfile()).ok().and_then(|p| p.trim().parse().ok()).is_some_and(crate::alive)
 }
 
 /// Starts `rookey overlay` unless one is up already (it outlives a recording by a moment).
@@ -249,10 +246,7 @@ impl Pill {
 }
 
 fn running(pid: u32) -> bool {
-    #[cfg(any(target_os = "linux", windows))]
-    return crate::alive(pid);
-    #[cfg(not(any(target_os = "linux", windows)))]
-    return pid > 0;
+    crate::alive(pid)
 }
 
 enum Part {

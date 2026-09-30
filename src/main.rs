@@ -50,12 +50,14 @@ mod desktop;
 mod history;
 #[cfg(target_os = "macos")]
 mod mac;
-#[cfg(any(target_os = "linux", windows))]
 mod hold;
 #[cfg(target_os = "linux")]
 mod listen;
 #[cfg(windows)]
 #[path = "listen_win.rs"]
+mod listen;
+#[cfg(target_os = "macos")]
+#[path = "listen_mac.rs"]
 mod listen;
 mod models;
 mod overlay;
@@ -92,12 +94,13 @@ fn stopfile() -> PathBuf {
 }
 
 /// Whether the process with this pid still runs.
-#[cfg(any(target_os = "linux", windows))]
 fn alive(pid: u32) -> bool {
     #[cfg(windows)]
     return win::alive(pid);
     #[cfg(target_os = "linux")]
     return std::path::Path::new("/proc").join(pid.to_string()).exists();
+    #[cfg(target_os = "macos")]
+    return mac::alive(pid);
 }
 
 /// A program started from a hotkey or the page gets no console window of its own on Windows.
@@ -244,6 +247,16 @@ fn cli() -> Res<()> {
                 println!("rookey {}", update::VERSION);
                 return Ok(());
             }
+            // what the page asks of a fresh process, or of Rookey (see mac.rs)
+            #[cfg(target_os = "macos")]
+            "__access" => return ui::access_here(),
+            #[cfg(target_os = "macos")]
+            "__ask" => return ui::ask_here(&args[i + 1..]),
+            #[cfg(target_os = "macos")]
+            "__capture" => return listen::capture_here(&args[i + 1..]),
+            // `just install`: Rookey gets the new build, and its agent restarts on it
+            #[cfg(target_os = "macos")]
+            "__restart-listen" => return listen::restart(&exe()?).map(drop),
             "overlay" => overlay = true,
             "toggle" => toggle = true,
             "ui" | "setup" => ui = true,
@@ -276,10 +289,7 @@ fn cli() -> Res<()> {
         return overlay::run();
     }
     if listen {
-        #[cfg(any(target_os = "linux", windows))]
         return listen::run();
-        #[cfg(not(any(target_os = "linux", windows)))]
-        return Err("`rookey listen` works on Linux and Windows; bind `rookey toggle` instead".into());
     }
 
     let pidfile = pidfile();
@@ -1058,8 +1068,9 @@ fn type_text(text: &str) -> Res<()> {
             // the text stays on the clipboard, so it can still be pasted by hand
             let why = String::from_utf8_lossy(&pasted.stderr);
             return Err(format!(
-                "macOS didn't let rookey type ({}): allow the app that started it under Privacy & Security > Accessibility and > Automation",
-                why.trim()
+                "macOS didn't let rookey type ({}): allow {} under Privacy & Security > Accessibility and > Automation",
+                why.trim(),
+                if mac::is_app() { "Rookey" } else { "the app that started it" }
             )
             .into());
         }

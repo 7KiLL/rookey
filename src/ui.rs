@@ -116,6 +116,8 @@ fn move_keys() {
 }
 
 pub fn run(open: bool, browser: bool) -> Res<()> {
+    // now, while the terminal that started this is sure to be among its parents
+    let _ = app();
     move_keys();
     models::clear_leftovers();
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
@@ -458,6 +460,8 @@ fn state() -> Value {
         ),
         // the app macOS asks about, when it can be named
         "app": app(),
+        // Rookey on macOS: the app that records when the hotkey does, with words of its own
+        "rookey": cfg!(target_os = "macos") && rookey_app(),
         "hotkey": desktop::hotkey(),
         "listen": listening(&get),
         "trial": trial(),
@@ -494,10 +498,60 @@ struct Access {
     automation: Option<bool>,
 }
 
+/// What macOS lets this process do, as JSON on stdout: `rookey __access`.
+#[cfg(target_os = "macos")]
+pub fn access_here() -> Res<()> {
+    use crate::mac;
+    let answer = json!({
+        "mic": mac::mic(), "screen": mac::screen(), "typing": mac::typing(),
+        "automation": mac::automation(),
+    });
+    mac::answer(&answer.to_string())
+}
+
+/// Asks macOS for one permission from this process: `rookey __ask <what>`, run as Rookey.
+#[cfg(target_os = "macos")]
+pub fn ask_here(args: &[String]) -> Res<()> {
+    use crate::mac;
+    match args.first().map(String::as_str) {
+        Some("mic-privacy") => drop(crate::mic_hears(Duration::from_millis(300))),
+        Some("screen-privacy") => mac::ask_screen(),
+        Some("accessibility") => mac::ask_typing(),
+        // any event at all brings up the question, and this one changes nothing
+        Some("automation") => drop(Command::new("osascript").args(["-e", r#"tell application "System Events" to get name"#]).output()),
+        _ => return Err("ask for what?".into()),
+    }
+    Ok(())
+}
+
+/// macOS answers Accessibility once per process and keeps that answer, so a check again from
+/// the same process never turns green. A new process asks every time: a child, which answers
+/// for the terminal like this one, or Rookey itself once it listens for the hotkey.
 #[cfg(target_os = "macos")]
 fn access() -> Access {
     use crate::mac;
-    Access { mic: mac::mic(), screen: Some(mac::screen()), typing: Some(mac::typing()), automation: mac::automation() }
+    let rookey = crate::listen::installed();
+    let printed = if rookey {
+        mac::as_app(&["__access"], Some(Duration::from_secs(5)))
+    } else {
+        crate::exe()
+            .and_then(|exe| Command::new(exe).arg("__access").stdin(Stdio::null()).stderr(Stdio::null()).output())
+            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+            .map_err(Into::into)
+    };
+    let answer: Value = match printed.map(|p| serde_json::from_str(p.trim())) {
+        Ok(Ok(answer)) => answer,
+        _ => {
+            vlog!(1, "ui: no fresh answer about the permissions, using this process's");
+            json!({ "mic": mac::mic(), "screen": mac::screen(), "typing": mac::typing(), "automation": mac::automation() })
+        }
+    };
+    Access {
+        mic: answer["mic"].as_bool(),
+        screen: answer["screen"].as_bool(),
+        typing: answer["typing"].as_bool(),
+        automation: answer["automation"].as_bool(),
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -545,11 +599,16 @@ fn pane(what: &str, os: &str, on_path: &dyn Fn(&str) -> bool) -> Option<(&'stati
 fn open_pane(asked: &Value) -> Res<()> {
     let what = asked["what"].as_str().unwrap_or_default();
     let (program, args) = pane(what, env::consts::OS, &on_path).ok_or("There is no such settings page here.")?;
+    // Rookey asks for itself once it listens for the hotkey; the terminal asks here
     #[cfg(target_os = "macos")]
-    match what {
-        "screen-privacy" => crate::mac::ask_screen(),
-        "accessibility" => crate::mac::ask_typing(),
-        _ => {}
+    if crate::listen::installed() {
+        crate::mac::as_app(&["__ask", what], None)?;
+    } else {
+        match what {
+            "screen-privacy" => crate::mac::ask_screen(),
+            "accessibility" => crate::mac::ask_typing(),
+            _ => {}
+        }
     }
     let quiet = Stdio::null;
     Command::new(program).args(args).stdin(quiet()).stdout(quiet()).stderr(quiet()).spawn()?;
@@ -588,6 +647,9 @@ fn responsible_app(table: &str, mut pid: u32) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn app() -> Option<String> {
+    if crate::listen::installed() {
+        return Some("Rookey".into());
+    }
     static APP: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     APP.get_or_init(|| {
         let out = Command::new("ps").args(["-A", "-o", "pid=,ppid=,comm="]).output().ok()?;
@@ -599,6 +661,16 @@ fn app() -> Option<String> {
 #[cfg(not(target_os = "macos"))]
 fn app() -> Option<String> {
     None
+}
+
+#[cfg(target_os = "macos")]
+fn rookey_app() -> bool {
+    crate::listen::installed()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn rookey_app() -> bool {
+    false
 }
 
 /// What recording needs and is missing on this machine, for the settings as they are, with
@@ -902,16 +974,13 @@ fn model(asked: &Value) -> Res<()> {
 /// The hotkey rookey listens for itself: its keys, whether the service runs, and why it
 /// can't here, if it can't.
 fn listening(get: &dyn Fn(&str) -> String) -> Value {
-    #[cfg(any(target_os = "linux", windows))]
-    return json!({
+    json!({
         "chord": get("ROOKEY_HOTKEY"),
         "running": crate::listen::running(),
         "blocked": crate::listen::access(),
         // while rookey listens, its only bind is the one that keeps the keys from the windows
         "swallowed": desktop::is_bound(),
-    });
-    #[cfg(not(any(target_os = "linux", windows)))]
-    return json!({ "chord": get("ROOKEY_HOTKEY"), "running": false, "blocked": "rookey listens for keys itself only on Linux and Windows." });
+    })
 }
 
 /// One hotkey at a time: the compositor's bind and rookey's own listening both run
@@ -923,11 +992,9 @@ fn hotkey(asked: &Value) -> Res<Value> {
         return Ok(state());
     }
     if asked["capture"] == true {
-        #[cfg(any(target_os = "linux", windows))]
         return Ok(json!({ "captured": crate::listen::capture(Duration::from_secs(10))? }));
     }
     if asked["unlisten"] == true {
-        #[cfg(any(target_os = "linux", windows))]
         crate::listen::stop()?;
         if desktop::is_bound() {
             desktop::unbind()?;
@@ -944,13 +1011,11 @@ fn hotkey(asked: &Value) -> Res<Value> {
     if done.get("taken").is_some() {
         return Ok(done);
     }
-    #[cfg(any(target_os = "linux", windows))]
     crate::listen::stop()?;
     write(&settings, &[("ROOKEY_HOTKEY".into(), String::new())])?;
     Ok(state())
 }
 
-#[cfg(any(target_os = "linux", windows))]
 fn listen(settings: &Path, chord: &str, replace: bool) -> Res<Value> {
     let chord = desktop::Chord::parse(chord)?;
     chord.check()?;
@@ -986,10 +1051,6 @@ fn listen(settings: &Path, chord: &str, replace: bool) -> Res<Value> {
     Ok(state())
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
-fn listen(_: &Path, _: &str, _: bool) -> Res<Value> {
-    Err("rookey listens for keys itself only on Linux and Windows.".into())
-}
 
 /// A test recording from the page: the same road a dictation takes, with the text shown
 /// instead of typed.

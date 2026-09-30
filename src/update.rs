@@ -343,7 +343,6 @@ pub fn run(args: &[String]) -> Res<()> {
         None => println!("rookey {} is the latest.", current()),
         Some((found, true)) => {
             println!("installed rookey {} at {}; it is used from the next start.", found.version, crate::ui::tilde(&exe));
-            #[cfg(any(target_os = "linux", windows))]
             match crate::listen::restart(&crate::exe()?) {
                 Ok(true) => println!("restarted the hotkey listener on it."),
                 Ok(false) => {}

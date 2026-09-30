@@ -322,7 +322,9 @@ function checkWords(c) {
   let title = t(`check.${c.id}.title`);
   // macOS grants its permissions to the app rookey ui runs in, named where the server could
   const app = ui.s.app || t("check.app.unknown");
-  let missing = tx(`check.${c.id}.missing`, { engine, app });
+  // Rookey, the app that hears the hotkey on macOS, has words of its own where they differ
+  const words = ui.s.rookey && has(`check.${c.id}.rookey`) ? `check.${c.id}.rookey` : `check.${c.id}.missing`;
+  let missing = tx(words, { engine, app });
   if (c.id === "mic" && c.title.includes(": ")) title = t("check.mic.named", { name: c.title.split(": ").slice(1).join(": ") });
   // which tools, as the server found them with the environment winning over the config
   if (c.id === "screen") missing = tx("check.screen.missing", { tools: listOf(c.tools || []) });
