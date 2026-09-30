@@ -49,7 +49,10 @@ rookey -v         # show transcript text as it arrives (-vv: steps + timings, -v
 rookey toggle     # 1st call: start recording. 2nd call: stop, transcribe, type into focused window
 rookey listen     # Linux, Windows: hold ROOKEY_HOTKEY to talk, let go to stop (a tap keeps it going)
 rookey ui         # settings page in the browser (--no-open just prints the link); `rookey setup` is the same page
+rookey history    # the last transcripts, oldest first (--clear deletes them)
 ```
+
+Every transcript is kept before it is typed, so text that went into the wrong window, or wasn't typed at all, can be copied again: the last 500, as JSON lines in `~/.local/share/rookey/history`, readable only by you and never uploaded. `rookey ui` lists them with a Copy button each. `ROOKEY_HISTORY=0` keeps none. Tests on the settings page aren't kept.
 
 ## Settings
 

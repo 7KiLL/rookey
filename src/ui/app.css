@@ -1231,6 +1231,26 @@ textarea:focus-visible {
   margin-top: 1rem;
 }
 
+/* ---- history: what was said, as it was typed --------------------------- */
+
+.history-text {
+  font-family: var(--keys);
+  font-stretch: 87%;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* a long home directory's path breaks anywhere rather than off the side of a phone */
+#history .about code {
+  overflow-wrap: anywhere;
+}
+
+.history ~ .actions {
+  margin-top: 0.75rem;
+}
+
 /* ---- narrow: the pad folds, specimen first ---------------------------- */
 
 @media (max-width: 58rem) {

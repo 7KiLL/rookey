@@ -3,10 +3,11 @@
 //!   rookey          record until Enter (or Ctrl-C), print transcript to stdout
 //!   rookey toggle   first call starts recording, second call stops it and types the text
 //!   rookey ui       settings in the browser (`rookey setup` too: what's missing comes first)
+//!   rookey history  the last transcripts, kept on this computer (`--clear` deletes them)
 //!
 //! Settings are env vars, or KEY=value lines in <config_dir>/rookey/config (the environment wins):
 //! ROOKEY_MODEL (ggml model path), ROOKEY_LANG (default "auto"), ROOKEY_BACKEND,
-//! ROOKEY_SANITIZE, ROOKEY_EDIT, ROOKEY_CONTEXT, ROOKEY_READER (see README).
+//! ROOKEY_SANITIZE, ROOKEY_EDIT, ROOKEY_CONTEXT, ROOKEY_READER, ROOKEY_HISTORY (see README).
 //! API keys are read the same way, from <data_dir>/rookey/keys.
 
 use std::collections::HashMap;
@@ -45,6 +46,7 @@ macro_rules! vlog {
 }
 
 mod desktop;
+mod history;
 #[cfg(any(target_os = "linux", windows))]
 mod hold;
 #[cfg(target_os = "linux")]
@@ -216,6 +218,7 @@ fn cli() -> Res<()> {
         match arg.as_str() {
             // the rest of the line is status's own flags
             "status" => return status::run(&args[i + 1..]),
+            "history" => return history::run(&args[i + 1..]),
             "overlay" => overlay = true,
             "toggle" => toggle = true,
             "ui" | "setup" => ui = true,
@@ -230,7 +233,7 @@ fn cli() -> Res<()> {
             }
             _ => {
                 eprintln!(
-                    "usage: rookey [-v|-vv|-vvv] [toggle | listen | setup | ui [--no-open] | status [--json|--waybar] [--follow] | overlay]"
+                    "usage: rookey [-v|-vv|-vvv] [toggle | listen | setup | ui [--no-open] | status [--json|--waybar] [--follow] | overlay | history [--clear]]"
                 );
                 std::process::exit(2);
             }
@@ -303,6 +306,8 @@ fn cli() -> Res<()> {
         if text.trim().is_empty() {
             return Err("heard no words".into());
         }
+        // kept before it is typed: typed into the wrong window, or not at all, it is still here
+        history::save(&text);
         if toggle {
             type_text(&text)?;
         } else {
