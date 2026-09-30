@@ -47,6 +47,11 @@ mkdir -p "$BIN_DIR"
 install -m755 "$tmp/rookey" "$BIN_DIR/rookey.new"
 mv "$BIN_DIR/rookey.new" "$BIN_DIR/rookey"
 echo "installed $BIN_DIR/rookey"
+# the settings window, beside rookey; without it (or WebKitGTK) `rookey ui` opens the browser
+if [ -f "$tmp/rookey-window" ]; then
+  install -m755 "$tmp/rookey-window" "$BIN_DIR/rookey-window.new"
+  mv "$BIN_DIR/rookey-window.new" "$BIN_DIR/rookey-window"
+fi
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
