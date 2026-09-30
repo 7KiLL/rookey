@@ -65,16 +65,17 @@ jobs:
         env:
           P12: ${{ secrets.MACOS_SIGN_P12 }}
           PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
-          RCODESIGN: apple-codesign-0.29.0-aarch64-apple-darwin
-          RCODESIGN_SHA256: d1a532150adaf90048260d76359261aa716abafc45c53c5dc18845029184334a
+          # not RCODESIGN_*: rcodesign reads those as settings of its own and fails on them
+          SIGNER: apple-codesign-0.29.0-aarch64-apple-darwin
+          SIGNER_SHA256: d1a532150adaf90048260d76359261aa716abafc45c53c5dc18845029184334a
         run: |
           if [ -z "$P12" ]; then echo "no MACOS_SIGN_P12: leaving the build ad-hoc"; exit 0; fi
-          curl -fsSL -o rcodesign.tar.gz "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.29.0/$RCODESIGN.tar.gz"
-          echo "$RCODESIGN_SHA256  rcodesign.tar.gz" | shasum -a 256 -c -
+          curl -fsSL -o rcodesign.tar.gz "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.29.0/$SIGNER.tar.gz"
+          echo "$SIGNER_SHA256  rcodesign.tar.gz" | shasum -a 256 -c -
           tar -xzf rcodesign.tar.gz
           echo "$P12" | base64 --decode > "$RUNNER_TEMP/rookey.p12"
           for pair in rookey:io.github.7kill.rookey rookey-window:io.github.7kill.rookey.settings; do
-            "$RCODESIGN/rcodesign" sign --p12-file "$RUNNER_TEMP/rookey.p12" --p12-password "$PASSWORD" \
+            "$SIGNER/rcodesign" sign --p12-file "$RUNNER_TEMP/rookey.p12" --p12-password "$PASSWORD" \
               --binary-identifier "${pair#*:}" "target/release/${pair%%:*}" "target/release/${pair%%:*}"
           done
           rm -f "$RUNNER_TEMP/rookey.p12"

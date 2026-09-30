@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader, sound, update};
 
 /// The settings the page may change. Keys are not among them, they have a file of their own.
-const SETTINGS: [&str; 23] = [
+const SETTINGS: [&str; 24] = [
     "ROOKEY_BACKEND",
     "ROOKEY_LANG",
     "ROOKEY_MODEL",
@@ -35,6 +35,7 @@ const SETTINGS: [&str; 23] = [
     "ROOKEY_NO_NOTIFICATIONS",
     "ROOKEY_NO_OVERLAY",
     "ROOKEY_PILL", // its look: full, compact or dot
+    "ROOKEY_PILL_AT", // where it goes: "x,y" in percent, empty for the bottom centre
     "ROOKEY_HISTORY", // 0 keeps no history, empty keeps it
     "ROOKEY_WORDS", // your own names and jargon, comma-separated
     "ROOKEY_KEEP_CLIPBOARD", // macOS: puts the clipboard back after a paste; on unless 0
@@ -877,6 +878,9 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
             "ROOKEY_PILL" if !value.is_empty() && !crate::overlay::STYLES.contains(&value.as_str()) => {
                 return Err(format!("The pill comes as {}, not {value}.", crate::overlay::STYLES.join(", ")).into());
             }
+            "ROOKEY_PILL_AT" if !value.is_empty() && crate::overlay::parse_at(&value).is_none() => {
+                return Err("The pill's place is two numbers from 0 to 100, like 50,100 for the bottom centre.".into());
+            }
             "ROOKEY_SOUNDS" if !value.is_empty() && !sound::SETS.contains(&value.as_str()) => {
                 return Err(format!("There are no {value} sounds, only {}.", sound::SETS.join(", ")).into());
             }
@@ -969,8 +973,13 @@ fn listening(get: &dyn Fn(&str) -> String) -> Value {
         "chord": get("ROOKEY_HOTKEY"),
         "running": crate::listen::running(),
         "blocked": crate::listen::access(),
-        // while rookey listens, its only bind is the one that keeps the keys from the windows
-        "swallowed": desktop::is_bound(),
+        // while rookey listens, its only bind is the one that keeps the keys from the windows;
+        // on macOS Rookey keeps them itself, all but a modifier on its own
+        "swallowed": if cfg!(target_os = "macos") {
+            desktop::Chord::parse(&get("ROOKEY_HOTKEY")).is_ok_and(|c| !crate::listen::is_modifier(c.key()))
+        } else {
+            desktop::is_bound()
+        },
     })
 }
 
@@ -1252,6 +1261,12 @@ mod tests {
         assert!(changes(br#"{"ROOKEY_HISTORY": "1"}"#).is_err()); // on is the default, and empty
         assert_eq!(changes(br#"{"ROOKEY_HISTORY": " 0 "}"#).unwrap(), [change("ROOKEY_HISTORY", "0")]);
         assert_eq!(changes(br#"{"ROOKEY_PILL": "dot"}"#).unwrap(), [change("ROOKEY_PILL", "dot")]);
+        assert_eq!(changes(br#"{"ROOKEY_PILL_AT": "12,0"}"#).unwrap(), [change("ROOKEY_PILL_AT", "12,0")]);
+        assert_eq!(changes(br#"{"ROOKEY_PILL_AT": ""}"#).unwrap(), [change("ROOKEY_PILL_AT", "")]);
+        for bad in [r#"{"ROOKEY_PILL_AT": "120,5"}"#, r#"{"ROOKEY_PILL_AT": "top"}"#, r#"{"ROOKEY_PILL_AT": "5,5
+PATH=/tmp"}"#] {
+            assert!(changes(bad.as_bytes()).is_err(), "{bad}");
+        }
         assert_eq!(changes(br#"{"ROOKEY_SOUNDS": "pencil"}"#).unwrap(), [change("ROOKEY_SOUNDS", "pencil")]);
         assert!(changes(br#"{"ROOKEY_SOUND_START": "/no/such/caw.wav"}"#).is_err());
         assert!(changes(br#"{"ROOKEY_SOUND_START": "/tmp"}"#).is_err()); // a folder isn't a sound

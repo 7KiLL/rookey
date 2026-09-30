@@ -53,6 +53,31 @@ fn font(bytes: &'static [u8]) -> Font {
     Font::from_bytes(bytes, FontSettings::default()).expect("fonts are compiled in")
 }
 
+/// Where the pill goes when nothing says otherwise: the bottom centre.
+pub const DEFAULT_AT: (f64, f64) = (50.0, 100.0);
+
+/// ROOKEY_PILL_AT: "x,y", each 0 to 100, in percent of the room the pill has on the screen's
+/// usable area, from the top left. Percent, so one setting fits every screen it lands on.
+pub fn parse_at(value: &str) -> Option<(f64, f64)> {
+    let (x, y) = value.split_once(',')?;
+    let percent = |s: &str| s.trim().parse::<f64>().ok().filter(|n| (0.0..=100.0).contains(n));
+    Some((percent(x)?, percent(y)?))
+}
+
+/// Where this pill goes, from the settings.
+pub fn at() -> (f64, f64) {
+    crate::setting("ROOKEY_PILL_AT").and_then(|v| parse_at(&v)).unwrap_or(DEFAULT_AT)
+}
+
+/// The pill's top-left corner in an area `w` by `h` (origin at its top left), in pixels that
+/// are `scale` times the pill's own: it keeps MARGIN from every edge, and `at` picks within
+/// the room that leaves. The default is the bottom centre the pill always had.
+pub fn spot(w: f64, h: f64, scale: f64, at: (f64, f64)) -> (f64, f64) {
+    let margin = MARGIN as f64 * scale;
+    let room = |size: f64, pill: u32| (size - pill as f64 * scale - 2.0 * margin).max(0.0);
+    (margin + room(w, W) * at.0 / 100.0, margin + room(h, H) * at.1 / 100.0)
+}
+
 /// Whether a recording should show the pill: it's on, and this desktop can show it.
 pub fn wanted() -> bool {
     if crate::setting("ROOKEY_NO_OVERLAY").is_some() {
@@ -407,7 +432,7 @@ mod wayland {
     use smithay_client_toolkit::shm::{Shm, ShmHandler};
     use smithay_client_toolkit::{delegate_dispatch2, delegate_registry, registry_handlers};
 
-    use super::{H, MARGIN, Pill, Res, W};
+    use super::{DEFAULT_AT, H, MARGIN, Pill, Res, W, spot};
     use crate::status::now_ms;
 
     struct App {
@@ -418,6 +443,9 @@ mod wayland {
         layer: LayerSurface,
         pill: Pill,
         scale: u32,
+        /// Somewhere other than the default: the first configure is the usable area's size,
+        /// asked for by stretching to every edge, and the pill is placed in it from there.
+        at: Option<(f64, f64)>,
         configured: bool,
         drawn: u64,
         exit: bool,
@@ -435,10 +463,18 @@ mod wayland {
         // an empty input region: the pill never takes a click
         surface.set_input_region(Some(Region::new(&compositor)?.wl_region()));
         let layer = layer_shell.create_layer_surface(&qh, surface, Layer::Overlay, Some("rookey"), None);
-        layer.set_anchor(Anchor::BOTTOM);
-        layer.set_margin(0, 0, MARGIN, 0);
+        let at = Some(super::at()).filter(|&at| at != DEFAULT_AT);
+        if at.is_some() {
+            // the layer shell anchors to edges and never says how big the screen is: a surface
+            // on all four edges is told the size of what bars leave free, which is the area
+            layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+            layer.set_size(0, 0);
+        } else {
+            layer.set_anchor(Anchor::BOTTOM);
+            layer.set_margin(0, 0, MARGIN, 0);
+            layer.set_size(W, H);
+        }
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        layer.set_size(W, H);
         layer.commit();
 
         let pool = SlotPool::new((W * H * 4) as usize, &shm)?;
@@ -450,6 +486,7 @@ mod wayland {
             layer,
             pill: Pill::new(),
             scale: 1,
+            at,
             configured: false,
             drawn: 0,
             exit: false,
@@ -526,7 +563,22 @@ mod wayland {
         fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &LayerSurface) {
             self.exit = true;
         }
-        fn configure(&mut self, _: &Connection, qh: &QueueHandle<Self>, _: &LayerSurface, _: LayerSurfaceConfigure, _: u32) {
+        fn configure(&mut self, _: &Connection, qh: &QueueHandle<Self>, _: &LayerSurface, configure: LayerSurfaceConfigure, _: u32) {
+            if let Some(at) = self.at.take() {
+                let (w, h) = configure.new_size;
+                if w > 0 && h > 0 {
+                    let (x, y) = spot(w as f64, h as f64, 1.0, at);
+                    self.layer.set_anchor(Anchor::TOP | Anchor::LEFT);
+                    self.layer.set_margin(y.round() as i32, 0, 0, x.round() as i32);
+                } else {
+                    self.layer.set_anchor(Anchor::BOTTOM);
+                    self.layer.set_margin(0, 0, MARGIN, 0);
+                }
+                self.layer.set_size(W, H);
+                // drawn once the compositor answers this one
+                self.layer.commit();
+                return;
+            }
             if !self.configured {
                 self.configured = true;
                 self.draw(qh);
@@ -563,6 +615,24 @@ mod wayland {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn where_the_pill_goes() {
+        assert_eq!(parse_at("50,100"), Some((50.0, 100.0)));
+        assert_eq!(parse_at(" 12.5 , 0 "), Some((12.5, 0.0)));
+        for bad in ["", "50", "50,", "a,b", "-1,50", "50,101", "50;100", "NaN,1"] {
+            assert_eq!(parse_at(bad), None, "{bad}");
+        }
+        // the default is where the pill always was: centred, MARGIN above the bottom
+        let (x, y) = spot(1512.0, 900.0, 1.0, DEFAULT_AT);
+        assert_eq!((x, y), ((1512.0 - W as f64) / 2.0, 900.0 - H as f64 - MARGIN as f64));
+        // the corners keep the margin, at 2x too
+        assert_eq!(spot(3024.0, 1800.0, 2.0, (0.0, 0.0)), (2.0 * MARGIN as f64, 2.0 * MARGIN as f64));
+        let (x, y) = spot(3024.0, 1800.0, 2.0, (100.0, 100.0));
+        assert_eq!((x + 2.0 * W as f64, y + 2.0 * H as f64), (3024.0 - 2.0 * MARGIN as f64, 1800.0 - 2.0 * MARGIN as f64));
+        // a screen too small for the margins puts it at the margin, not off screen
+        assert_eq!(spot(100.0, 20.0, 1.0, (100.0, 100.0)), (MARGIN as f64, MARGIN as f64));
+    }
     use serde_json::json;
 
     #[test]

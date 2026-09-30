@@ -4,7 +4,7 @@
 
 use std::ffi::{c_char, c_void};
 
-use crate::overlay::{H, MARGIN, Pill, W};
+use crate::overlay::{H, Pill, W, spot};
 use crate::status::now_ms;
 
 type Id = *mut c_void;
@@ -93,9 +93,10 @@ unsafe fn visible_frame(screen: Id) -> Rect {
     }
 }
 
-/// Where the pill goes: centred at the bottom of the usable screen, like on the other systems.
-fn place(area: Rect) -> Rect {
-    Rect { x: area.x + (area.w - W as f64) / 2.0, y: area.y + MARGIN as f64, w: W as f64, h: H as f64 }
+/// Where the pill goes in the usable screen, which macOS counts from the bottom left.
+fn place(area: Rect, at: (f64, f64)) -> Rect {
+    let (x, from_top) = spot(area.w, area.h, 1.0, at);
+    Rect { x: area.x + x, y: area.y + area.h - from_top - H as f64, w: W as f64, h: H as f64 }
 }
 
 pub fn run() -> crate::Res<()> {
@@ -111,7 +112,7 @@ pub fn run() -> crate::Res<()> {
             return Err("no screen to show the pill on".into());
         }
         let scale = (send!(screen, "backingScaleFactor"; f64)).round().max(1.0) as u32;
-        let rect = place(visible_frame(screen));
+        let rect = place(visible_frame(screen), crate::overlay::at());
 
         let window: Id = send!(class(c"NSWindow"), "alloc"; Id);
         const BORDERLESS: usize = 0;
@@ -188,12 +189,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn centred_above_the_dock() {
+    fn placed_on_the_usable_screen() {
+        use crate::overlay::{DEFAULT_AT, MARGIN};
         // a 1512x982 screen with the Dock taking 70 points at the bottom and the menu bar 33
-        let at = place(Rect { x: 0.0, y: 70.0, w: 1512.0, h: 879.0 });
+        let area = Rect { x: 0.0, y: 70.0, w: 1512.0, h: 879.0 };
+        let at = place(area, DEFAULT_AT);
         assert_eq!((at.x, at.y, at.w, at.h), ((1512.0 - W as f64) / 2.0, 70.0 + MARGIN as f64, W as f64, H as f64));
+        // the top left is under the menu bar, not behind it
+        let at = place(area, (0.0, 0.0));
+        assert_eq!((at.x, at.y + at.h), (MARGIN as f64, 70.0 + 879.0 - MARGIN as f64));
         // a second screen to the left of the main one starts at a negative x
-        let at = place(Rect { x: -1920.0, y: 0.0, w: 1920.0, h: 1080.0 });
+        let at = place(Rect { x: -1920.0, y: 0.0, w: 1920.0, h: 1080.0 }, DEFAULT_AT);
         assert!(at.x < 0.0 && at.x + at.w < 0.0);
     }
 }
