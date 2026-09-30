@@ -1,0 +1,15 @@
+# Weekly, grouped: one pull request per ecosystem, not one per crate.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      crates: { patterns: ["*"] }
+    commit-message: { prefix: "chore(deps)" }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ["*"] }
+    commit-message: { prefix: "ci" }

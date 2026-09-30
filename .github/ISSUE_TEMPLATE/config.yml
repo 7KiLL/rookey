@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: A question, or an idea
+    url: https://github.com/7KiLL/rookey/discussions
+    about: How to set something up, whether rookey can do something, what it should do next.
+  - name: A security problem
+    url: https://github.com/7KiLL/rookey/security/advisories/new
+    about: Report it privately, not in an issue.
