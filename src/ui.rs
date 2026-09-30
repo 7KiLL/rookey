@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use crate::{DEFAULT_MODEL, Mode, Res, config_path, desktop, keys_path, models, parse_config, reader, sound};
 
 /// The settings the page may change. Keys are not among them, they have a file of their own.
-const SETTINGS: [&str; 18] = [
+const SETTINGS: [&str; 19] = [
     "ROOKEY_BACKEND",
     "ROOKEY_LANG",
     "ROOKEY_MODEL",
@@ -34,6 +34,7 @@ const SETTINGS: [&str; 18] = [
     "ROOKEY_SOUND_FAILED",
     "ROOKEY_NO_NOTIFICATIONS",
     "ROOKEY_NO_OVERLAY",
+    "ROOKEY_PILL", // its look: full, compact or dot
     // the settings page's own look; empty follows the system and the browser
     "ROOKEY_UI_THEME",
     "ROOKEY_UI_LANG",
@@ -205,7 +206,7 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
     }
     let done = match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/api/alive") => return alive(stream),
-        ("GET", "/api/state") => Ok(state()),
+        ("GET", "/api/state") => Ok(state_after_listening()),
         // what changes by itself, asked for often while it does
         ("GET", "/api/progress") => Ok(json!({ "download": models::download_state(), "trial": trial() })),
         ("POST", "/api/save") => match changes(&req.body) {
@@ -305,6 +306,18 @@ fn read(path: Option<std::path::PathBuf>) -> std::collections::HashMap<String, S
     path.and_then(|p| fs::read_to_string(p).ok()).map(|text| parse_config(&text)).unwrap_or_default()
 }
 
+/// Whether the mic sent any sound when last listened to; None before the first time or when
+/// it couldn't be opened (the mic check says why then).
+static HEARD: Mutex<Option<bool>> = Mutex::new(None);
+
+/// The state, after half a second from the mic: what the page asks for when it opens and
+/// on "Check again". Saves answer with `state()` and keep the last result.
+fn state_after_listening() -> Value {
+    let heard = default_mic().0 && crate::mic_hears(Duration::from_millis(500)).unwrap_or(false);
+    *HEARD.lock().unwrap() = Some(heard);
+    state()
+}
+
 /// Everything the page shows. Of an API key only the last characters leave this process.
 fn state() -> Value {
     let settings = read(config_path());
@@ -383,6 +396,7 @@ fn state() -> Value {
         "tools": { "grim": on_path("grim"), "tesseract": on_path("tesseract") },
         "checks": checks(
             &get,
+            *HEARD.lock().unwrap(),
             model.is_file(),
             keys.get("ELEVENLABS_API_KEY").is_some_and(|k| !k.is_empty()) || env::var_os("ELEVENLABS_API_KEY").is_some(),
         ),
@@ -412,17 +426,26 @@ fn masked(key: &str) -> String {
 
 /// What recording needs and is missing on this machine, for the settings as they are, with
 /// the command that installs it.
-fn checks(get: &dyn Fn(&str) -> String, model_found: bool, has_key: bool) -> Vec<Value> {
+fn checks(get: &dyn Fn(&str) -> String, heard: Option<bool>, model_found: bool, has_key: bool) -> Vec<Value> {
     let mut checks = Vec::new();
     let mut check = |id: &str, ok: bool, title: &str, missing: &str, fix: Option<String>| {
         checks.push(json!({ "id": id, "ok": ok, "title": title, "missing": missing, "fix": if ok { None } else { fix } }));
     };
-    // ponytail: only whether the system has a mic. A headset with its mic detached still counts,
-    // and listening can't tell: some headsets send exact zeros whenever you're quiet.
-    // "Record a test" is where a dead mic shows up.
     let (mic, name) = default_mic();
     let title = name.map_or("Microphone".to_string(), |n| format!("Microphone: {n}"));
     check("mic", mic, &title, "No microphone is plugged in, or none is set as the default.", None);
+    // A wireless headset that is off still has its dongle plugged in: only listening tells.
+    // ponytail: a headset with a noise gate sends exact zeros while you're quiet too; the
+    // advice says to speak and check again rather than guessing which one it is
+    if mic && heard == Some(false) {
+        check(
+            "mic-silent",
+            false,
+            "Sound from the microphone",
+            "It sent only silence. Turn it on and unmute it, allow microphone access in the system's privacy settings, then speak and check again.",
+            None,
+        );
+    }
 
     let backend = env::var("ROOKEY_BACKEND").unwrap_or_else(|_| get("ROOKEY_BACKEND"));
     if backend.is_empty() || backend == "local" {
@@ -558,6 +581,9 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
             // switches: on or unset, nothing else
             "ROOKEY_QUIET" | "ROOKEY_NO_NOTIFICATIONS" | "ROOKEY_NO_OVERLAY" if !matches!(value.as_str(), "" | "1") => {
                 return Err(format!("{key} is a switch, 1 or nothing.").into());
+            }
+            "ROOKEY_PILL" if !value.is_empty() && !crate::overlay::STYLES.contains(&value.as_str()) => {
+                return Err(format!("The pill comes as {}, not {value}.", crate::overlay::STYLES.join(", ")).into());
             }
             "ROOKEY_SOUNDS" if !value.is_empty() && !sound::SETS.contains(&value.as_str()) => {
                 return Err(format!("There are no {value} sounds, only {}.", sound::SETS.join(", ")).into());
@@ -759,7 +785,9 @@ fn try_it(asked: &Value) -> Res<()> {
 
     thread::spawn(move || {
         crate::load_config(); // what was just changed on the page is what gets tested
-        let result = crate::run(Mode::Page, stopped).map_err(|e| e.to_string());
+        let result = crate::run(Mode::Page, stopped);
+        crate::finished(Mode::Page, &result); // the pill and the sounds, as from the hotkey
+        let result = result.map_err(|e| e.to_string());
         let mut trial = TRIAL.lock().unwrap();
         trial.stop = None;
         trial.waited_ms = trial.stopped.map_or(0, |t| t.elapsed().as_millis());
@@ -889,6 +917,8 @@ mod tests {
         assert!(changes(br#"{"ROOKEY_UI_THEME": "neon"}"#).is_err());
         assert!(changes(br#"{"ROOKEY_NO_OVERLAY": "yes please"}"#).is_err());
         assert!(changes(br#"{"ROOKEY_SOUNDS": "kazoo"}"#).is_err());
+        assert!(changes(br#"{"ROOKEY_PILL": "hexagon"}"#).is_err());
+        assert_eq!(changes(br#"{"ROOKEY_PILL": "dot"}"#).unwrap(), [change("ROOKEY_PILL", "dot")]);
         assert_eq!(changes(br#"{"ROOKEY_SOUNDS": "pencil"}"#).unwrap(), [change("ROOKEY_SOUNDS", "pencil")]);
         assert!(changes(br#"{"ROOKEY_SOUND_START": "/no/such/caw.wav"}"#).is_err());
         assert!(changes(br#"{"ROOKEY_SOUND_START": "/tmp"}"#).is_err()); // a folder isn't a sound
@@ -902,6 +932,17 @@ mod tests {
         assert!(ok.contains(&change("ROOKEY_EDIT", "one two")));
         assert!(ok.contains(&change("ROOKEY_BACKEND", "")));
         assert!(same("abc", "abc") && !same("abc", "abd") && !same("abc", "ab"));
+    }
+
+    #[test]
+    fn silent_mic_is_its_own_check() {
+        let none = |_: &str| String::new();
+        let silent = |heard| checks(&none, heard, true, true).iter().any(|c| c["id"] == "mic-silent");
+        // only for a mic that is there: a missing one already says so
+        let there = checks(&none, None, true, true)[0]["ok"] == true;
+        assert_eq!(silent(Some(false)), there);
+        assert!(!silent(Some(true)));
+        assert!(!silent(None)); // not listened to yet
     }
 
     #[test]

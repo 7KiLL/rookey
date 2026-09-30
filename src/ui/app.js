@@ -142,6 +142,7 @@ const cloud = () => engine() !== "local";
 const reader = () => (values().ROOKEY_READER in READERS ? values().ROOKEY_READER : "ocr");
 const provider = (id) => ui.s.providers.find((p) => p.id === id);
 const SOUND_SETS = ["rook", "notes", "pencil"]; // sound::SETS, the first is the default
+const PILL_STYLES = ["full", "compact", "dot"]; // overlay::STYLES, the first is the default
 const CUES = ["start", "stop", "typed", "failed"];
 const soundSet = () => (SOUND_SETS.includes(values().ROOKEY_SOUNDS) ? values().ROOKEY_SOUNDS : SOUND_SETS[0]);
 const hasKey = (id) => provider(id).saved || provider(id).env;
@@ -599,12 +600,14 @@ function Sounds() {
           const label = t("sounds.play-cue", { cue: t(`cue.${cue}`) });
           return html`
           <li class="row">
-            <span class="row-text">
+            <span class="row-text row-wide">
               <label class="choice-name" for="${id}">${t(`cue.${cue}`)}</label>
-              <input class="typed-input" id="${id}" type="text" spellcheck="false" autocomplete="off" placeholder="${t("cue.builtin")}"
-                .value="${() => values()[setting(cue)]}" @change="${(e) => save({ [setting(cue)]: e.target.value.trim() })}">
+              <span class="with-button">
+                <input class="typed-input" id="${id}" type="text" spellcheck="false" autocomplete="off" placeholder="${t("cue.builtin")}"
+                  .value="${() => values()[setting(cue)]}" @change="${(e) => save({ [setting(cue)]: e.target.value.trim() })}">
+                <button type="button" class="button" aria-label="${label}" @click="${() => play(cue)}">${t("sounds.play")}</button>
+              </span>
             </span>
-            <button type="button" class="button" aria-label="${label}" @click="${() => play(cue)}">${t("sounds.play")}</button>
           </li>`;
         })}
       </ul>
@@ -758,9 +761,37 @@ function Hotkey() {
         save({ ROOKEY_QUIET: e.target.checked ? "" : "1" }))}
       ${toggle("overlay", t("overlay"), tx("overlay.about", { cmd: code("rookey status --follow") }), () => !isOn(values().ROOKEY_NO_OVERLAY), (e) =>
         save({ ROOKEY_NO_OVERLAY: e.target.checked ? "" : "1" }))}
+      ${() => (isOn(values().ROOKEY_NO_OVERLAY) ? "" : PillStyle())}
       ${toggle("notifications", t("notifications"), t("notifications.about"), () => !isOn(values().ROOKEY_NO_NOTIFICATIONS), (e) =>
         save({ ROOKEY_NO_NOTIFICATIONS: e.target.checked ? "" : "1" }))}
     </section>`;
+}
+
+/** The pill's look: the first is the default and saved as empty. */
+function PillStyle() {
+  const style = () => (PILL_STYLES.includes(values().ROOKEY_PILL) ? values().ROOKEY_PILL : PILL_STYLES[0]);
+  return html`
+    <div class="sub" id="pill-field">
+      <h3 id="pill-title">${t("pill.style")}</h3>
+      <div class="chips" role="radiogroup" aria-labelledby="pill-title">
+        ${PILL_STYLES.map((id) =>
+          chip("radio", "pill", id, () => style() === id, t(`pill.${id}`), () => save({ ROOKEY_PILL: id === PILL_STYLES[0] ? "" : id })))}
+      </div>
+      <div class="pill-preview" aria-hidden="true">${PillDrawing(style)}</div>
+      <p class="hint">${() => t(`pill.${style()}.about`)}</p>
+    </div>`;
+}
+
+/** The pill as it looks while listening, drawn like overlay.rs draws it. The words under it say the same. */
+function PillDrawing(style) {
+  // one drawing for all three, parts hidden by style: a slot only updates when it is a function
+  return html`
+    <span class="pill-dot" hidden="${() => style() !== "dot"}"></span>
+    <span class="pill" hidden="${() => style() === "dot"}">
+      <span class="pill-rec"></span>
+      <span class="pill-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="pill-clock" hidden="${() => style() !== "full"}">0:04</span>
+    </span>`;
 }
 
 function HotkeyForm(listening, set) {

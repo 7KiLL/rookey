@@ -300,6 +300,9 @@ fn cli() -> Res<()> {
         let _ = fs::remove_file(&pidfile);
     }
     let done = text.and_then(|text| {
+        if text.trim().is_empty() {
+            return Err("heard no words".into());
+        }
         if toggle {
             type_text(&text)?;
         } else {
@@ -307,21 +310,26 @@ fn cli() -> Res<()> {
         }
         Ok(text)
     });
-    // what bars and the pill show next: the words, or why there are none
-    match &done {
+    finished(if toggle { Mode::Toggle } else { Mode::Terminal }, &done);
+    done.map(drop)
+}
+
+/// What bars, the pill and the sounds say once a recording is over: the words, or why there
+/// are none.
+fn finished(mode: Mode, done: &Res<String>) {
+    match done {
         Ok(text) => status::typed(text),
         Err(e) => {
             status::failed(&e.to_string());
-            if toggle && overlay::wanted() {
+            if mode != Mode::Terminal && overlay::wanted() {
                 overlay::show(); // a hotkey has no terminal: the pill is where the reason shows
             }
         }
     }
-    if toggle && setting("ROOKEY_QUIET").is_none() {
+    if mode != Mode::Terminal && setting("ROOKEY_QUIET").is_none() {
         sound::play(if done.is_ok() { sound::Cue::Typed } else { sound::Cue::Failed }, setting);
     }
     sound::wait();
-    done.map(drop)
 }
 
 /// Who asked for the recording, which decides where progress and the text go.
@@ -801,26 +809,8 @@ fn record_until(
     mode: Mode,
     mut tick: impl FnMut(&[f32], u32, bool) -> Res<()>,
 ) -> Res<(Vec<f32>, u32)> {
-    let device = cpal::default_host().default_input_device().ok_or("no input device")?;
-    let config = device.default_input_config()?;
-    let rate = config.sample_rate();
     let buf = Arc::new(Mutex::new(Vec::new()));
-    vlog!(
-        2,
-        "mic: {} ({} Hz, {} ch, {:?})",
-        device.id().map(|id| id.to_string()).unwrap_or_else(|_| "?".into()),
-        rate,
-        config.channels(),
-        config.sample_format()
-    );
-
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => build::<f32>(&device, config.into(), buf.clone()),
-        cpal::SampleFormat::I16 => build::<i16>(&device, config.into(), buf.clone()),
-        cpal::SampleFormat::I32 => build::<i32>(&device, config.into(), buf.clone()),
-        f => return Err(format!("unsupported sample format {f:?}").into()),
-    }?;
-    stream.play()?;
+    let (stream, rate) = open_mic(buf.clone())?;
     notify(mode, "recording");
     if mode != Mode::Page {
         eprintln!("recording... (Enter to stop)");
@@ -832,18 +822,65 @@ fn record_until(
         // peak level tells you at a glance whether the mic is actually hearing you
         let peak = chunk.iter().fold(0f32, |m, s| m.max(s.abs()));
         vlog!(3, "mic: {:4} ms captured, peak {peak:.3}", chunk.len() * 1000 / rate as usize);
-        if mode != Mode::Page {
-            status::level(peak);
-        }
+        status::level(peak);
         tick(&chunk, rate, false)?;
     }
     drop(stream);
     vlog!(2, "mic: stopped");
 
     let samples = std::mem::take(&mut *buf.lock().unwrap());
+    if silent(&samples, rate) {
+        return Err(SILENT.into());
+    }
     tick(&samples[sent..], rate, true)?;
     vlog!(2, "recorded {:.2} s total", samples.len() as f64 / rate as f64);
     Ok((samples, rate))
+}
+
+/// Opens the default input and starts it, every sample going into `buf` as mono.
+/// Opening it is also what asks for access, where the system asks (macOS, Windows).
+fn open_mic(buf: Arc<Mutex<Vec<f32>>>) -> Res<(cpal::Stream, u32)> {
+    let device = cpal::default_host().default_input_device().ok_or("no input device")?;
+    let config = device.default_input_config()?;
+    let rate = config.sample_rate();
+    vlog!(
+        2,
+        "mic: {} ({} Hz, {} ch, {:?})",
+        device.id().map(|id| id.to_string()).unwrap_or_else(|_| "?".into()),
+        rate,
+        config.channels(),
+        config.sample_format()
+    );
+    let stream = match config.sample_format() {
+        cpal::SampleFormat::F32 => build::<f32>(&device, config.into(), buf),
+        cpal::SampleFormat::I16 => build::<i16>(&device, config.into(), buf),
+        cpal::SampleFormat::I32 => build::<i32>(&device, config.into(), buf),
+        f => return Err(format!("unsupported sample format {f:?}").into()),
+    }?;
+    stream.play()?;
+    Ok((stream, rate))
+}
+
+/// Listens to the default input for `time`: false when it sent nothing but silence.
+pub fn mic_hears(time: Duration) -> Res<bool> {
+    let buf = Arc::new(Mutex::new(Vec::new()));
+    let (stream, _) = open_mic(buf.clone())?;
+    thread::sleep(time);
+    drop(stream);
+    let heard = buf.lock().unwrap().iter().any(|s| s.abs() >= SILENCE);
+    Ok(heard)
+}
+
+/// Below this a sample is silence: a real mic's own hiss is well above it.
+const SILENCE: f32 = 1e-4;
+
+/// Kept short: the pill shows one line.
+const SILENT: &str = "mic is silent: is it on, unmuted and the default input?";
+
+/// Half a second or more of dead zeros: a headset that is off but whose dongle is plugged
+/// in, a muted source. A real mic in a quiet room still hears its own noise floor.
+fn silent(samples: &[f32], rate: u32) -> bool {
+    samples.len() >= rate as usize / 2 && samples.iter().all(|s| s.abs() < SILENCE)
 }
 
 fn build<T>(
@@ -955,16 +992,13 @@ fn type_text(text: &str) -> Res<()> {
     Ok(())
 }
 
-/// Says what's happening: the status file for bars (see status.rs) on every recording but the
-/// page's test; and from a hotkey, which has no terminal, the pill on screen (or else a
-/// desktop notification) and a sound as the recording starts and ends.
+/// Says what's happening: the status file for bars (see status.rs) on every recording; and
+/// from a hotkey, which has no terminal, or the page's test, the pill on screen and a sound
+/// as the recording starts and ends (a hotkey without the pill gets a desktop notification).
 fn notify(mode: Mode, msg: &str) {
-    if mode == Mode::Page {
-        return;
-    }
     let recording = msg == "recording";
     status::set(if recording { "listening" } else { msg }, serde_json::json!({}));
-    if mode != Mode::Toggle {
+    if mode == Mode::Terminal {
         return;
     }
     if setting("ROOKEY_QUIET").is_none() {
@@ -974,7 +1008,8 @@ fn notify(mode: Mode, msg: &str) {
     if pill && recording {
         overlay::show();
     }
-    if pill || setting("ROOKEY_NO_NOTIFICATIONS").is_some() {
+    // the page's test is watched on the page itself
+    if pill || mode == Mode::Page || setting("ROOKEY_NO_NOTIFICATIONS").is_some() {
         return;
     }
     #[cfg(target_os = "macos")]
@@ -1060,6 +1095,15 @@ mod tests {
         assert_eq!(keyterms(text, 10, 20), all);
         assert_eq!(keyterms(text, 2, 20), all[..2]);
         assert_eq!(keyterms(text, 10, 11), ["MAX_BACKEND", "isTerminal", "Realtime", "The"]);
+    }
+
+    #[test]
+    fn silence_is_caught() {
+        assert!(silent(&[0.0; 8000], 16000));
+        assert!(!silent(&[0.0; 100], 16000)); // too short to tell
+        let mut quiet_room = vec![0.0; 8000];
+        quiet_room[4000] = 0.002;
+        assert!(!silent(&quiet_room, 16000));
     }
 
     #[test]

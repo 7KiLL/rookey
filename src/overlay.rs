@@ -110,8 +110,12 @@ pub fn run() -> Res {
 
 type Res = crate::Res<()>;
 
+/// The looks to pick from with ROOKEY_PILL: the first is the default.
+pub const STYLES: [&str; 3] = ["full", "compact", "dot"];
+
 /// What the pill shows, and the bits that move.
 pub struct Pill {
+    style: &'static str,
     raw: Value,
     shown: Value,
     history: [f32; 7], // the last levels, oldest first, drawn as bars
@@ -124,7 +128,9 @@ pub struct Pill {
 impl Pill {
     pub fn new() -> Pill {
         let raw = status::read().unwrap_or(Value::Null);
-        Pill { raw, shown: Value::Null, history: [0.0; 7], bars: [0.0; 7], at: 0, pushed: 0, polled: 0 }
+        let style = crate::setting("ROOKEY_PILL");
+        let style = STYLES.into_iter().find(|&s| style.as_deref() == Some(s)).unwrap_or(STYLES[0]);
+        Pill { style, raw, shown: Value::Null, history: [0.0; 7], bars: [0.0; 7], at: 0, pushed: 0, polled: 0 }
     }
 
     /// Reads the status now and then and moves the animation. `false` once there is nothing
@@ -165,19 +171,38 @@ impl Pill {
         c.px.fill(0);
         let state = self.shown["state"].as_str().unwrap_or("idle");
         let words = |key: &str| say(key, &self.shown);
+        let full = self.style == "full";
+        // a failure is always the whole pill: the reason is the point
+        if self.style == "dot" && state != "failed" {
+            let r = H as f32 / 2.0;
+            let x = W as f32 / 2.0;
+            let (color, size) = match state {
+                "listening" => (RED, 6.0 + 2.0 * self.bars[6].sqrt().min(1.0)),
+                "transcribing" => (INK, 6.0),
+                _ => return, // typed: the words on screen say it
+            };
+            c.capsule((x, r), (x, r), size + 3.0, PAPER, 1.0);
+            c.capsule((x, r), (x, r), size, color, 1.0);
+            return;
+        }
         let (fill, content): (_, Vec<Part>) = match state {
-            "listening" => {
+            "listening" if full => {
                 let clock = status::clock(now.saturating_sub(self.at) / 1000);
                 (INK, vec![Part::Dot, Part::Bars, Part::Digits(clock)])
             }
-            "transcribing" => (INK, vec![Part::Dots, Part::Words(words("transcribing"))]),
-            "typed" => (INK, vec![Part::Tick, Part::Words(words("typed"))]),
+            "listening" => (INK, vec![Part::Dot, Part::Bars]),
+            "transcribing" if full => (INK, vec![Part::Dots, Part::Words(words("transcribing"))]),
+            "transcribing" => (INK, vec![Part::Dots]),
+            "typed" if full => (INK, vec![Part::Tick, Part::Words(words("typed"))]),
+            "typed" => (INK, vec![Part::Tick]),
             "failed" => (ALARM, vec![Part::Mark, Part::Words(self.shown["reason"].as_str().unwrap_or("").into())]),
             _ => return,
         };
         let (pad_l, pad_r, gap) = (14.0, 16.0, 10.0);
         let room = W as f32 - pad_l - pad_r - 2.0; // the hairline stays inside the surface
         let gaps = gap * (content.len() - 1) as f32;
+        // one part alone sits in a circle-ish pill, as wide as it is tall at least
+        let (pad_l, pad_r) = if content.len() == 1 { let p = (H as f32 - content[0].width(0.0)) / 2.0; (p, p) } else { (pad_l, pad_r) };
         let fixed = content.iter().filter(|p| !p.is_text()).map(|p| p.width(0.0)).sum::<f32>() + gaps;
         let widths: Vec<f32> = content.iter().map(|p| p.width(room - fixed)).collect();
         let pill_w = pad_l + widths.iter().sum::<f32>() + gaps + pad_r;
@@ -553,12 +578,23 @@ mod tests {
             json!({"state": "typed", "words": 12}),
             json!({"state": "failed", "reason": "x".repeat(300)}), // too long: cut, not a panic
         ] {
-            let pill = Pill { shown, ..Pill::new() };
-            pill.draw(&mut px, 2, 4_000);
-            let centre = ((H as usize) * (W * 2) as usize + W as usize) * 4; // middle of the 2x buffer
-            assert_eq!(px[centre + 3], 255, "the pill covers the middle");
-            assert_eq!(&px[0..4], [0, 0, 0, 0], "the corner stays see-through");
+            for style in STYLES {
+                let pill = Pill { style, shown: shown.clone(), ..Pill::new() };
+                pill.draw(&mut px, 2, 4_000);
+                let centre = ((H as usize) * (W * 2) as usize + W as usize) * 4; // middle of the 2x buffer
+                // the dot draws nothing once typed: the typed words say it
+                let drawn = !(style == "dot" && shown["state"] == "typed");
+                assert_eq!(px[centre + 3] == 255, drawn, "{style} {shown}: the middle");
+                assert_eq!(&px[0..4], [0, 0, 0, 0], "the corner stays see-through");
+            }
         }
+        // a failure keeps its reason in every style: the pill is wider than the dot
+        let failed = json!({"state": "failed", "reason": "mic is silent"});
+        let pill = Pill { style: "dot", shown: failed, ..Pill::new() };
+        pill.draw(&mut px, 2, 4_000);
+        let row = (H as usize) * (W * 2) as usize * 4;
+        let left = (W as usize - 60) * 4; // 30 logical pixels left of centre, at 2x
+        assert_eq!(px[row + left + 3], 255);
     }
 
     #[test]
