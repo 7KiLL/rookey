@@ -158,6 +158,12 @@ fn open_browser(url: &str, browser: bool) -> std::io::Result<()> {
         let helper = crate::installed()?.with_file_name(if cfg!(windows) { "rookey-window.exe" } else { "rookey-window" });
         let mut cmd = Command::new(&helper);
         cmd.arg(url).stdin(Stdio::null()).stdout(Stdio::null());
+        // WebKitGTK's DMABUF renderer flickers on scroll with NVIDIA's own driver; a value the
+        // user set wins
+        const DMABUF: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+        if cfg!(target_os = "linux") && Path::new("/proc/driver/nvidia").exists() && env::var_os(DMABUF).is_none() {
+            cmd.env(DMABUF, "1");
+        }
         if crate::verbosity() < 2 {
             cmd.stderr(Stdio::null());
         }
