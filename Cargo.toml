@@ -38,6 +38,7 @@ windows-sys = { version = "0.61", features = [
 [workspace]
 # the settings window: a binary of its own, so this one links no webview
 members = ["window"]
+exclude = [".claude"]  # agent worktrees are copies of this repo, not members
 
 [features]
 cuda = ["whisper-rs/cuda"]    # Linux + NVIDIA
