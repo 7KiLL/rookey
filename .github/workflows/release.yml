@@ -48,6 +48,8 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: "13.3.1"
+          # its own cache is 4 GB a runner image and would push whisper.cpp's out of the 10 GB
+          use-github-cache: false
 
       - name: Build
         shell: bash
