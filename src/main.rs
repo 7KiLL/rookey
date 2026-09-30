@@ -485,7 +485,8 @@ fn spawn_context() -> Option<Context> {
 
 /// After the stop the text is waited for, so the screen read gets a little longer to finish
 /// and is dropped past that: on a short clip the terms would cost more than they bring.
-// ponytail: fixed budget; OCR of a 4K screen takes ~0.7 s here, so holds under ~0.45 s go without terms.
+// ponytail: fixed budget; OCR of a busy 1440p screen takes ~2 s here in English alone and ~5.5 s
+// with ukr and rus packs too (~3.5 s with tessdata_fast), so holds shorter than that go without terms.
 const CONTEXT_BUDGET: Duration = Duration::from_millis(250);
 
 fn settle(context: &mut Option<Context>) {
@@ -598,8 +599,11 @@ fn elevenlabs_key() -> Res<String> {
 
 /// The languages in ROOKEY_LANG ("en" or "en,uk"); none means any.
 fn languages() -> Vec<String> {
-    setting("ROOKEY_LANG")
-        .unwrap_or_default()
+    language_list(&setting("ROOKEY_LANG").unwrap_or_default())
+}
+
+fn language_list(setting: &str) -> Vec<String> {
+    setting
         .split(',')
         .map(|l| l.trim().to_lowercase())
         .filter(|l| !l.is_empty() && l != "auto")
