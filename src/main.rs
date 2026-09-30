@@ -278,6 +278,12 @@ fn cli() -> Res<()> {
             }
         }
     }
+    // Rookey opened by itself (a double-click, or macOS reopening it after a permission
+    // changed) has nothing to record for: it shows the settings instead
+    #[cfg(target_os = "macos")]
+    if args.is_empty() && mac::is_app() {
+        ui = true;
+    }
     move_from_yap();
     #[cfg(windows)]
     update::clear_old();

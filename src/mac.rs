@@ -308,8 +308,16 @@ pub fn place_app(from: &Path) -> Res<PathBuf> {
     // itself when Rookey is what runs: the copy is already this binary
     if fs::canonicalize(from).ok() != fs::canonicalize(&exe).ok() {
         write(exe, &fs::read(from)?)?;
+        let from = fs::canonicalize(from)?;
+        write(contents.join("Resources/source"), from.to_string_lossy().as_bytes())?;
     }
     Ok(app)
+}
+
+/// The rookey Rookey was copied from, where its window and updates are.
+pub fn source() -> Option<PathBuf> {
+    let app = app()?;
+    Some(PathBuf::from(fs::read_to_string(app.join("Contents/Resources/source")).ok()?.trim()))
 }
 
 /// Rookey's Info.plist. macOS ends an app that uses the microphone or sends Apple events

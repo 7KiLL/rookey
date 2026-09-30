@@ -152,7 +152,11 @@ fn token() -> Res<String> {
 /// browser when that is missing, can't start, or `browser` asks for it.
 fn open_browser(url: &str, browser: bool) -> std::io::Result<()> {
     if !browser {
-        let helper = crate::exe()?.with_file_name(if cfg!(windows) { "rookey-window.exe" } else { "rookey-window" });
+        let exe = crate::exe()?;
+        // Rookey is a copy on its own: its window is next to the rookey it came from
+        #[cfg(target_os = "macos")]
+        let exe = if crate::mac::is_app() { crate::mac::source().unwrap_or(exe) } else { exe };
+        let helper = exe.with_file_name(if cfg!(windows) { "rookey-window.exe" } else { "rookey-window" });
         let mut cmd = Command::new(&helper);
         cmd.arg(url).stdin(Stdio::null()).stdout(Stdio::null());
         if crate::verbosity() < 2 {
