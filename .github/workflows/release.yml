@@ -56,6 +56,29 @@ jobs:
         run: cargo build --release --locked ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
       - name: Build the settings window
         run: cargo build --release --locked -p rookey-window
+      - name: Sign (macOS)
+        # macOS keeps Rookey's permissions for a signing certificate across updates, and asks
+        # again after every update of an ad-hoc build. The certificate is rookey's own, not
+        # Apple's: MACOS_SIGN_P12 (base64) and MACOS_SIGN_PASSWORD. Without them (a fork)
+        # the build stays ad-hoc.
+        if: runner.os == 'macOS'
+        env:
+          P12: ${{ secrets.MACOS_SIGN_P12 }}
+          PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          RCODESIGN: apple-codesign-0.29.0-aarch64-apple-darwin
+          RCODESIGN_SHA256: d1a532150adaf90048260d76359261aa716abafc45c53c5dc18845029184334a
+        run: |
+          if [ -z "$P12" ]; then echo "no MACOS_SIGN_P12: leaving the build ad-hoc"; exit 0; fi
+          curl -fsSL -o rcodesign.tar.gz "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.29.0/$RCODESIGN.tar.gz"
+          echo "$RCODESIGN_SHA256  rcodesign.tar.gz" | shasum -a 256 -c -
+          tar -xzf rcodesign.tar.gz
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/rookey.p12"
+          for pair in rookey:io.github.7kill.rookey rookey-window:io.github.7kill.rookey.settings; do
+            "$RCODESIGN/rcodesign" sign --p12-file "$RUNNER_TEMP/rookey.p12" --p12-password "$PASSWORD" \
+              --binary-identifier "${pair#*:}" "target/release/${pair%%:*}" "target/release/${pair%%:*}"
+          done
+          rm -f "$RUNNER_TEMP/rookey.p12"
+          codesign -dv target/release/rookey 2>&1 | grep -E 'Identifier|Authority'
 
       - name: Package (Linux, macOS)
         if: runner.os != 'Windows'
