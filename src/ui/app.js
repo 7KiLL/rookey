@@ -330,10 +330,37 @@ function checkWords(c) {
   let missing = tx(words, { engine, app });
   if (c.id === "mic" && c.title.includes(": ")) title = t("check.mic.named", { name: c.title.split(": ").slice(1).join(": ") });
   // which tools, as the server found them with the environment winning over the config
-  if (c.id === "screen") missing = tx("check.screen.missing", { tools: listOf(c.tools || []) });
+  if (c.id === "screen") {
+    const tools = c.tools || [], langs = c.langs || [];
+    missing = [];
+    if (tools.length) missing.push(...tx("check.screen.missing", { tools: listOf(tools) }));
+    if (langs.length) {
+      // languages whose tesseract pack isn't installed: their text comes out as junk
+      if (tools.length) missing.push(" ");
+      missing.push(t("check.screen.langs", { langs: listOf(langs.map((l) => languageName(l))) }));
+      if (ui.s.os === "windows") missing.push(" ", t("check.screen.langs.windows"));
+    }
+  }
   // the default model is here, so the one the settings name is somewhere else
   if (c.id === "model" && ui.s.models.catalog[0].installed) missing = tx("check.model.elsewhere", { engine });
   return { title, missing };
+}
+
+/** Languages tesseract has no pack for: optional, so a note under the switch, not a failed check.
+ * Drawn once, with every word in a function slot: a redrawn template would keep its old words. */
+function ScreenLangs() {
+  const screen = () => ui.s.checks.find((c) => c.id === "screen") || {};
+  const langs = () => screen().langs || [];
+  const words = () => [
+    t("check.screen.langs", { langs: listOf(langs().map((l) => languageName(l))) }),
+    ...(ui.s.os === "windows" ? [" ", t("check.screen.langs.windows")] : []),
+  ];
+  // when a tool is missing too, the setup check shows the one command for all of it
+  const fix = () => (screen().ok && screen().fix) || "";
+  return html`<div hidden="${() => termsMode() === "off" || !langs().length}">
+    <p class="note">${() => words()}</p>
+    <span class="with-button" hidden="${() => !fix()}"><code class="fix">${() => fix()}</code>${copyButton(fix)}</span>
+  </div>`;
 }
 
 /** The one thing that fixes a failing check: a command to copy, a settings pane, or the fix itself. */
@@ -588,6 +615,7 @@ function Cleanup() {
       ${shell("ROOKEY_SANITIZE")}
       ${toggle("terms", t("terms"), terms, () => termsMode() !== "off", (e) => save({ ROOKEY_CONTEXT: e.target.checked ? "1" : "" }))}
       ${shell("ROOKEY_CONTEXT")}
+      ${ScreenLangs()}
     </section>`;
 }
 

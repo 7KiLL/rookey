@@ -742,29 +742,55 @@ fn checks(get: &dyn Fn(&str) -> String, heard: Option<bool>, model_found: bool, 
                 None,
             );
         }
-        if cfg!(any(target_os = "linux", target_os = "macos")) {
-            let reader = env::var("ROOKEY_READER").unwrap_or_else(|_| get("ROOKEY_READER"));
-            // macOS has screencapture built in
-            let mut tools = if cfg!(target_os = "macos") { vec![] } else { vec!["grim"] };
-            if reader.is_empty() || reader == "ocr" {
-                tools.push("tesseract");
+        let reader = env::var("ROOKEY_READER").unwrap_or_else(|_| get("ROOKEY_READER"));
+        let ocr = reader.is_empty() || reader == "ocr";
+        // macOS has screencapture built in; Windows has ROOKEY_SCREENSHOT, and no tesseract
+        // on PATH by that name
+        let mut tools = if cfg!(target_os = "linux") { vec!["grim"] } else { vec![] };
+        if ocr && cfg!(any(target_os = "linux", target_os = "macos")) {
+            tools.push("tesseract");
+        }
+        let missing: Vec<&str> = tools.iter().copied().filter(|t| !on_path(t)).collect();
+        // the picked languages tesseract has no pack for: their text is read as junk
+        let picked = crate::language_list(&env::var("ROOKEY_LANG").unwrap_or_else(|_| get("ROOKEY_LANG")));
+        let installed = if ocr && !picked.is_empty() { reader::installed_langs() } else { vec![] };
+        let (_, mut no_pack) = reader::ocr_langs(&picked, &installed);
+        // no tesseract on Windows: nothing to add packs to, and no row for it there
+        if !ocr || (cfg!(windows) && installed.is_empty()) {
+            no_pack.clear();
+        }
+        if tools.is_empty() && no_pack.is_empty() {
+            return checks;
+        }
+        let packs: Vec<&str> = no_pack.iter().filter_map(|l| reader::tesseract_lang(l)).collect();
+        let mut needed: Vec<Option<String>> = missing.iter().map(|t| packages(t)).collect();
+        if !packs.is_empty() {
+            needed.push(installer().and_then(|i| lang_packages(i, &packs)));
+        }
+        let fix = needed.into_iter().collect::<Option<Vec<_>>>().and_then(|p| Some(format!("{} {}", installer()?, p.join(" "))));
+        let mut words = Vec::new();
+        if !missing.is_empty() {
+            words.push(format!("{} missing, so the screen can't be read.", missing.join(" and ") + if missing.len() > 1 { " are" } else { " is" }));
+        }
+        if !no_pack.is_empty() {
+            words.push(format!("Tesseract can't read {} yet: without the language pack, that text turns into junk terms.", no_pack.join(" and ")));
+            if cfg!(windows) {
+                words.push("Run the Tesseract installer again and tick them under Additional language data, or put their .traineddata files into its tessdata folder.".into());
             }
-            let missing: Vec<&str> = tools.iter().copied().filter(|t| !on_path(t)).collect();
-            if tools.is_empty() {
-                return checks;
-            }
-            let fix = missing.iter().map(|t| packages(t)).collect::<Option<Vec<_>>>().map(|p| p.join(" "));
-            check(
-                "screen",
-                missing.is_empty(),
-                "Reading the screen",
-                &format!("{} missing, so the screen can't be read.", missing.join(" and ") + if missing.len() > 1 { " are" } else { " is" }),
-                fix.and_then(|p| Some(format!("{} {p}", installer()?))),
-            );
-            // by name too, for the page to word in its own language
-            if let Some(last) = checks.last_mut() {
-                last["tools"] = json!(missing);
-            }
+        }
+        check(
+            "screen",
+            // a missing language pack is optional: the page notes it under the switch, not as a failure
+            missing.is_empty(),
+            "Reading the screen",
+            &words.join(" "),
+            fix.clone(),
+        );
+        // by name too, for the page to word in its own language
+        if let Some(last) = checks.last_mut() {
+            last["tools"] = json!(missing);
+            last["langs"] = json!(no_pack);
+            last["fix"] = json!(fix); // kept when only packs are missing: the page offers it under the switch
         }
     }
     checks
@@ -801,6 +827,20 @@ fn packages(tool: &str) -> Option<String> {
         "tesseract" if installer() == Some("sudo pacman -S --needed") => "tesseract tesseract-data-eng".into(),
         "tesseract" if debian => "tesseract-ocr".into(),
         "wtype" | "grim" | "tesseract" => tool.into(),
+        _ => return None,
+    })
+}
+
+/// The packages of tesseract's language packs (its own names: ukr, chi_sim), by the installer
+/// above. Homebrew has them all in one.
+fn lang_packages(installer: &str, packs: &[&str]) -> Option<String> {
+    let each = |prefix: &str| packs.iter().map(|p| format!("{prefix}{p}")).collect::<Vec<_>>().join(" ");
+    Some(match installer {
+        "brew install" => "tesseract-lang".into(),
+        "sudo pacman -S --needed" => each("tesseract-data-"),
+        // Debian writes chi_sim as chi-sim
+        "sudo apt install" => each("tesseract-ocr-").replace('_', "-"),
+        "sudo dnf install" => each("tesseract-langpack-"),
         _ => return None,
     })
 }
@@ -1358,6 +1398,16 @@ PATH=/tmp"}"#] {
         // elsewhere nothing is asked, so there are no such rows
         let got = ids(&Access::default(), None);
         assert!(!got.iter().any(|c| c.0.ends_with("-access") || c.0 == "automation"));
+    }
+
+    #[test]
+    fn language_pack_names() {
+        let packs = ["ukr", "chi_sim"];
+        assert_eq!(lang_packages("sudo pacman -S --needed", &packs).unwrap(), "tesseract-data-ukr tesseract-data-chi_sim");
+        assert_eq!(lang_packages("sudo apt install", &packs).unwrap(), "tesseract-ocr-ukr tesseract-ocr-chi-sim");
+        assert_eq!(lang_packages("sudo dnf install", &packs).unwrap(), "tesseract-langpack-ukr tesseract-langpack-chi_sim");
+        assert_eq!(lang_packages("brew install", &packs).unwrap(), "tesseract-lang");
+        assert_eq!(lang_packages("zypper in", &packs), None);
     }
 
     #[test]

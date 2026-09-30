@@ -485,7 +485,8 @@ fn spawn_context() -> Option<Context> {
 
 /// After the stop the text is waited for, so the screen read gets a little longer to finish
 /// and is dropped past that: on a short clip the terms would cost more than they bring.
-// ponytail: fixed budget; OCR of a 4K screen takes ~0.7 s here, so holds under ~0.45 s go without terms.
+// ponytail: fixed budget; OCR of a busy 1440p screen takes ~2 s here in English alone and ~5.5 s
+// with ukr and rus packs too (~3.5 s with tessdata_fast), so holds shorter than that go without terms.
 const CONTEXT_BUDGET: Duration = Duration::from_millis(250);
 
 fn settle(context: &mut Option<Context>) {
@@ -559,6 +560,7 @@ fn keyterms(text: &str, max: usize, max_len: usize) -> Vec<String> {
         let word = word.trim_matches('_');
         if (3..=max_len).contains(&word.chars().count())
             && (word.contains('_') || word.chars().any(char::is_uppercase))
+            && !misread(word)
         {
             *count.entry(word).or_default() += 1;
         }
@@ -567,6 +569,24 @@ fn keyterms(text: &str, max: usize, max_len: usize) -> Vec<String> {
     let mut terms: Vec<_> = count.into_iter().collect();
     terms.sort_by_key(|&(w, n)| (is_name(w), std::cmp::Reverse(n), w));
     terms.into_iter().take(max).map(|(w, _)| w.to_string()).collect()
+}
+
+/// A word OCR got wrong, the way it reads a script it has no pack for: Latin and Cyrillic
+/// letters in one word, or a lone digit followed by letters in a word of five letters or more
+/// (З, О, Ч, Б read as 3, 0, 4, 6: `A0POTIX`, `3aKOHUMN`). Digits at the end (`mp3`, `H264`),
+/// numbers (`256GB`, `x86_64`) and short ones (`7KiLL`, `GPT4o`, `k8s`) stay.
+// ponytail: an all-letter misread (`KOHTPON`, `PasHbie`) looks like a real name and stays;
+// the language's tesseract pack is the fix, which the page's setup check asks for.
+fn misread(word: &str) -> bool {
+    let latin = word.chars().any(|c| c.is_ascii_alphabetic());
+    let cyrillic = word.chars().any(|c| matches!(c, '\u{0400}'..='\u{04FF}'));
+    let chars: Vec<char> = word.chars().collect();
+    let lone_digit = chars.iter().enumerate().any(|(i, c)| {
+        c.is_ascii_digit()
+            && !(i > 0 && chars[i - 1].is_ascii_digit())
+            && chars.get(i + 1).is_some_and(|n| n.is_alphabetic())
+    });
+    (latin && cyrillic) || (lone_digit && chars.iter().filter(|c| c.is_alphabetic()).count() >= 5)
 }
 
 type Loader = thread::JoinHandle<Result<WhisperContext, whisper_rs::WhisperError>>;
@@ -598,8 +618,11 @@ fn elevenlabs_key() -> Res<String> {
 
 /// The languages in ROOKEY_LANG ("en" or "en,uk"); none means any.
 fn languages() -> Vec<String> {
-    setting("ROOKEY_LANG")
-        .unwrap_or_default()
+    language_list(&setting("ROOKEY_LANG").unwrap_or_default())
+}
+
+fn language_list(setting: &str) -> Vec<String> {
+    setting
         .split(',')
         .map(|l| l.trim().to_lowercase())
         .filter(|l| !l.is_empty() && l != "auto")
@@ -1232,6 +1255,25 @@ mod tests {
         assert_eq!(keyterms(text, 10, 20), all);
         assert_eq!(keyterms(text, 2, 20), all[..2]);
         assert_eq!(keyterms(text, 10, 11), ["MAX_BACKEND", "isTerminal", "Realtime", "The"]);
+    }
+
+    /// Cyrillic read with the English pack only, from a real screen here.
+    #[test]
+    fn keyterms_drop_misreads() {
+        for junk in ["3aKOHUMN", "A0POTIX", "N0BAGTENE", "PE3OHAHT", "Apy3Ls", "aYZ3EWH", "Кnoпка", "Пpивiт"] {
+            assert!(misread(junk), "{junk}");
+        }
+        let real = ["7KiLL", "ElevenLabs", "YouTube", "iPhone", "256GB", "usage_limits", "mp3", "H264", "x86_64",
+                    "GPT4o", "k8s", "B2B", "Київ", "ROOKEY_LANG", "v0"];
+        for word in real {
+            assert!(!misread(word), "{word}");
+        }
+        // all-letter misreads look like names and stay: the language pack is the fix
+        for kept in ["KOHTPON", "BIAOCKI", "CMOTPETE", "MOPOXEHEM", "OHMMYLLY", "PasHbie", "TTouck", "nMBO", "npuaHaioTca", "AayHBOAKEP"] {
+            assert!(!misread(kept), "{kept}");
+        }
+        let screen = "KOHTPON 3aKOHUMN A0POTIX 7KiLL ElevenLabs 256GB N0BAGTENE usage_limits";
+        assert_eq!(keyterms(screen, 10, 20), ["256GB", "7KiLL", "ElevenLabs", "KOHTPON", "usage_limits"]);
     }
 
     #[test]

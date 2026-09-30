@@ -50,7 +50,7 @@ The settings people change most:
 | `ROOKEY_SANITIZE=1` | drops filler words, false starts, noises |
 | `ROOKEY_EDIT` | an instruction for cleaning up the text. ElevenLabs only, costs extra |
 | `ROOKEY_WORDS` | names and jargon, comma-separated, to help recognition |
-| `ROOKEY_CONTEXT=1` | reads the screen as recording starts and passes its terms along. `ROOKEY_READER` is `ocr` (tesseract, local), `openai` or `anthropic` (the screenshot is sent to them) |
+| `ROOKEY_CONTEXT=1` | reads the screen as recording starts and passes its terms along. `ROOKEY_READER` is `ocr` (tesseract, local: English and the `ROOKEY_LANG` languages whose tesseract packs are installed), `openai` or `anthropic` (the screenshot is sent to them) |
 | `ROOKEY_HISTORY=0` | keeps no transcripts |
 | `ROOKEY_QUIET=1`, `ROOKEY_NO_OVERLAY=1`, `ROOKEY_NO_NOTIFICATIONS=1` | no sounds, no pill, no notifications |
 | `ROOKEY_AUTOUPDATE=0` | only says that a release is out |

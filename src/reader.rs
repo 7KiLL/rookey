@@ -113,9 +113,86 @@ fn screencapture(format: &str) -> Res<Vec<u8>> {
     }
 }
 
+/// Tesseract's pack for a language in ROOKEY_LANG (ISO 639-1). None for a code not mapped here.
+// ponytail: the page's languages and the common ones next to them; another code is read as English.
+pub fn tesseract_lang(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "en" => "eng",
+        "uk" => "ukr",
+        "ru" => "rus",
+        "be" => "bel",
+        "bg" => "bul",
+        "sr" => "srp",
+        "de" => "deu",
+        "es" => "spa",
+        "fr" => "fra",
+        "pl" => "pol",
+        "it" => "ita",
+        "pt" => "por",
+        "nl" => "nld",
+        "cs" => "ces",
+        "sk" => "slk",
+        "ro" => "ron",
+        "hu" => "hun",
+        "sv" => "swe",
+        "da" => "dan",
+        "no" | "nb" => "nor",
+        "fi" => "fin",
+        "tr" => "tur",
+        "el" => "ell",
+        "he" => "heb",
+        "ar" => "ara",
+        "hi" => "hin",
+        "ja" => "jpn",
+        "ko" => "kor",
+        "zh" => "chi_sim",
+        "vi" => "vie",
+        "id" => "ind",
+        _ => return None,
+    })
+}
+
+/// The packs in `tesseract --list-langs`: one per line under a header, which is
+/// `List of available languages in "<dir>" (n):` in 5.x and has no dir in 4.x.
+fn listed_langs(out: &str) -> Vec<String> {
+    out.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("List of")).map(str::to_string).collect()
+}
+
+/// The packs tesseract has here; none where it doesn't run.
+pub fn installed_langs() -> Vec<String> {
+    let out = Command::new("tesseract").arg("--list-langs").stderr(Stdio::null()).output();
+    out.map(|o| listed_langs(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
+}
+
+/// The picked languages' packs that are installed, and the picked languages whose pack isn't.
+/// English is left out of both: it is always read.
+pub fn ocr_langs<'a>(picked: &'a [String], installed: &[String]) -> (Vec<&'static str>, Vec<&'a str>) {
+    let (mut have, mut missing) = (Vec::new(), Vec::new());
+    for code in picked {
+        match tesseract_lang(code) {
+            None | Some("eng") => {}
+            Some(pack) if installed.iter().any(|i| i == pack) => have.push(pack),
+            Some(_) => missing.push(code.as_str()),
+        }
+    }
+    (have, missing)
+}
+
 fn ocr(image: &[u8]) -> Res<String> {
+    // asked once per process: a pack installed meanwhile counts from the next run
+    static INSTALLED: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let picked = crate::languages();
+    let (packs, missing) = match picked.is_empty() {
+        true => Default::default(),
+        false => ocr_langs(&picked, INSTALLED.get_or_init(installed_langs)),
+    };
+    if !missing.is_empty() {
+        vlog!(1, "context: tesseract has no pack for {}, so that text is read as English", missing.join(", "));
+    }
+    let langs = ["eng"].into_iter().chain(packs).collect::<Vec<_>>().join("+");
+    vlog!(2, "context: tesseract -l {langs}");
     let mut tesseract = Command::new("tesseract")
-        .args(["-", "-"])
+        .args(["-", "-", "-l", &langs])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -243,6 +320,30 @@ mod tests {
             { "type": "text", "text": "ROOKEY_LANG\nniri" },
         ]});
         assert_eq!(anthropic_text(&claude), "ROOKEY_LANG\nniri");
+    }
+
+    #[test]
+    fn ocr_languages() {
+        let v5 = "List of available languages in \"/usr/share/tessdata/\" (3):\neng\nosd\nukr\n";
+        let v4 = "List of available languages (2):\r\neng\r\nscript/Cyrillic\r\n";
+        assert_eq!(listed_langs(v5), ["eng", "osd", "ukr"]);
+        assert_eq!(listed_langs(v4), ["eng", "script/Cyrillic"]);
+        assert!(listed_langs("").is_empty());
+
+        assert_eq!(tesseract_lang("uk"), Some("ukr"));
+        assert_eq!(tesseract_lang("de"), Some("deu"));
+        assert_eq!(tesseract_lang("zh"), Some("chi_sim"));
+        assert_eq!(tesseract_lang("xx"), None);
+        // every language the page offers has a pack
+        for code in ["en", "uk", "ru", "de", "es", "fr", "pl"] {
+            assert!(tesseract_lang(code).is_some(), "{code}");
+        }
+
+        let installed = listed_langs(v5);
+        let picked: Vec<String> = ["en", "uk", "ru", "xx"].map(String::from).into();
+        // English is always read, an unknown code is skipped, ru has no pack here
+        assert_eq!(ocr_langs(&picked, &installed), (vec!["ukr"], vec!["ru"]));
+        assert_eq!(ocr_langs(&[], &installed), (vec![], vec![]));
     }
 
     /// Needs a screen, grim and a key:
