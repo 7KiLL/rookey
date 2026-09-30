@@ -1,26 +1,37 @@
-# Builds and tests on the systems nobody here can run. Linux is tested locally (see AGENTS.md).
+# Builds and tests every system on each push, and on pull requests from forks.
 name: check
 
 on:
   push:
     branches: ["**"]
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
+    # a branch of this repo already ran on its push; a fork's pull request has no push here
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     strategy:
       fail-fast: false
       matrix:
         include:
+          - { os: ubuntu-22.04 }
           - { os: macos-15, features: metal }
           - { os: windows-2022 }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        # WebKitGTK for rookey-window only; rookey itself links none of it
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libclang-dev cmake libwebkit2gtk-4.1-dev
       - name: Test
         shell: bash
         run: cargo test --release --locked ${{ matrix.features && format('--features {0}', matrix.features) || '' }}

@@ -1,0 +1,45 @@
+name: Something doesn't work
+description: A recording that fails, text that isn't typed, a setting that doesn't stick
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: rookey --version
+      placeholder: rookey 0.2.1
+    validations: { required: true }
+  - type: input
+    id: system
+    attributes:
+      label: System and desktop
+      placeholder: Arch Linux, niri 26.04 / macOS 26.1 / Windows 11
+    validations: { required: true }
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine (ROOKEY_BACKEND)
+      options: [local, elevenlabs, elevenlabs-realtime]
+    validations: { required: true }
+  - type: dropdown
+    id: how
+    attributes:
+      label: How you started it
+      options: [rookey in a terminal, rookey toggle from a hotkey, rookey listen, the settings page]
+  - type: textarea
+    id: status
+    attributes:
+      label: rookey status --json
+      description: Right after it failed. A failure keeps its reason until the next recording.
+      render: json
+  - type: textarea
+    id: log
+    attributes:
+      label: rookey -vv
+      description: Record a few words in a terminal with `rookey -vv` and paste what it printed. Check it has no API key in it.
+      render: text
