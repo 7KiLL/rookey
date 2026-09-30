@@ -463,6 +463,7 @@ fn state() -> Value {
         "tools": { "grim": on_path("grim"), "tesseract": on_path("tesseract") },
         "checks": checks(
             &get,
+            default_mic(),
             *HEARD.lock().unwrap(),
             model.is_file(),
             keys.get("ELEVENLABS_API_KEY").is_some_and(|k| !k.is_empty()) || env::var_os("ELEVENLABS_API_KEY").is_some(),
@@ -674,7 +675,8 @@ fn rookey_app() -> bool {
 
 /// What recording needs and is missing on this machine, for the settings as they are, with
 /// the command that installs it, or the settings pane that turns it on.
-fn checks(get: &dyn Fn(&str) -> String, heard: Option<bool>, model_found: bool, has_key: bool, access: &Access) -> Vec<Value> {
+/// `mic` is `default_mic()`'s answer, passed in: tests never touch the machine's audio.
+fn checks(get: &dyn Fn(&str) -> String, mic: (bool, Option<String>), heard: Option<bool>, model_found: bool, has_key: bool, access: &Access) -> Vec<Value> {
     let mut checks = Vec::new();
     let mut check = |id: &str, ok: bool, title: &str, missing: &str, fix: Option<String>| {
         let open = opens(id, env::consts::OS).filter(|what| pane(what, env::consts::OS, &on_path).is_some());
@@ -684,7 +686,7 @@ fn checks(get: &dyn Fn(&str) -> String, heard: Option<bool>, model_found: bool, 
             "open": if ok { None } else { open },
         }));
     };
-    let (mic, name) = default_mic();
+    let (mic, name) = mic;
     let title = name.map_or("Microphone".to_string(), |n| format!("Microphone: {n}"));
     check("mic", mic, &title, "No microphone is plugged in, or none is set as the default.", None);
     let allowed = access.mic != Some(false);
@@ -1337,12 +1339,14 @@ PATH=/tmp"}"#] {
     #[test]
     fn silent_mic_is_its_own_check() {
         let none = |_: &str| String::new();
-        let silent = |heard| checks(&none, heard, true, true, &Access::default()).iter().any(|c| c["id"] == "mic-silent");
+        let silent = |there: bool, heard| {
+            checks(&none, (there, None), heard, true, true, &Access::default()).iter().any(|c| c["id"] == "mic-silent")
+        };
+        assert!(silent(true, Some(false)));
         // only for a mic that is there: a missing one already says so
-        let there = checks(&none, None, true, true, &Access::default())[0]["ok"] == true;
-        assert_eq!(silent(Some(false)), there);
-        assert!(!silent(Some(true)));
-        assert!(!silent(None)); // not listened to yet
+        assert!(!silent(false, Some(false)));
+        assert!(!silent(true, Some(true)));
+        assert!(!silent(true, None)); // not listened to yet
     }
 
     #[test]
@@ -1394,7 +1398,7 @@ PATH=/tmp"}"#] {
         let screen = |k: &str| if k == "ROOKEY_CONTEXT" { "1".to_string() } else { String::new() };
         let denied = Access { mic: Some(false), screen: Some(false), typing: Some(false), automation: Some(false) };
         let ids = |access: &Access, heard| -> Vec<(String, bool)> {
-            checks(&screen, heard, true, true, access).iter().map(|c| (c["id"].as_str().unwrap().to_string(), c["ok"] == true)).collect()
+            checks(&screen, (true, None), heard, true, true, access).iter().map(|c| (c["id"].as_str().unwrap().to_string(), c["ok"] == true)).collect()
         };
         let got = ids(&denied, Some(false));
         for id in ["mic-access", "typing-access", "automation", "screen-access"] {
