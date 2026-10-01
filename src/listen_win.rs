@@ -10,10 +10,10 @@ use std::{fs, thread};
 
 use windows_sys::Win32::System::Console::FreeConsole;
 
-use crate::{Res, t};
 use crate::desktop::Chord;
 use crate::hold::{Hold, recording, toggle};
 use crate::win;
+use crate::{Res, t};
 
 // ponytail: polls the key state 100 times a second; a low-level keyboard hook if that ever
 // shows up in the battery or misses a quick tap.
@@ -191,7 +191,12 @@ fn reg(args: &[&str]) -> Res<()> {
     crate::no_window(&mut cmd);
     let out = cmd.output()?;
     if !out.status.success() {
-        return Err(t!("listen.tool-failed", tool = format!("reg {}", args[0]), why = String::from_utf8_lossy(&out.stderr).trim()).into());
+        return Err(t!(
+            "listen.tool-failed",
+            tool = format!("reg {}", args[0]),
+            why = String::from_utf8_lossy(&out.stderr).trim()
+        )
+        .into());
     }
     Ok(())
 }

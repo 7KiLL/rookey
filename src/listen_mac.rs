@@ -13,10 +13,10 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use std::{env, fs, thread};
 
-use crate::{Res, t};
 use crate::desktop::Chord;
 use crate::hold::{Hold, recording, toggle};
 use crate::mac;
+use crate::{Res, t};
 
 const LABEL: &str = "io.github.7kill.rookey.listen";
 
@@ -212,7 +212,10 @@ pub fn run() -> Res<()> {
 /// Accessibility as a new process sees it: this one keeps the answer it got first.
 fn fresh_typing() -> bool {
     let Ok(exe) = crate::exe() else { return false };
-    Command::new(exe).arg("__access").output().is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains(r#""typing":true"#))
+    Command::new(exe)
+        .arg("__access")
+        .output()
+        .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains(r#""typing":true"#))
 }
 
 /// Waits for keys to be pressed, like on Linux and Windows: a modifier alone counts as it goes
@@ -413,7 +416,11 @@ mod tests {
 
     #[test]
     fn the_agent_is_one_plist() {
-        let plist = agent(std::path::Path::new("/a b/Rookey.app/Contents/MacOS/rookey"), "/opt/homebrew/bin:/usr/bin", std::path::Path::new("/l"));
+        let plist = agent(
+            std::path::Path::new("/a b/Rookey.app/Contents/MacOS/rookey"),
+            "/opt/homebrew/bin:/usr/bin",
+            std::path::Path::new("/l"),
+        );
         assert!(plist.contains("<string>/a b/Rookey.app/Contents/MacOS/rookey</string><string>listen</string>"));
         assert!(plist.contains(LABEL) && plist.contains("/opt/homebrew/bin"));
         assert_eq!(xml("a<b>&'\""), "a&lt;b&gt;&amp;&apos;&quot;");

@@ -16,9 +16,9 @@ use std::{fs, thread};
 
 use evdev::{EventSummary, KeyCode};
 
-use crate::{Res, t};
 use crate::desktop::Chord;
 use crate::hold::{Hold, recording, toggle};
+use crate::{Res, t};
 
 const UNIT: &str = "rookey-listen.service";
 
@@ -216,7 +216,12 @@ fn unit_path() -> Option<PathBuf> {
 fn systemctl(args: &[&str]) -> Res<()> {
     let out = Command::new("systemctl").arg("--user").args(args).output()?;
     if !out.status.success() {
-        return Err(t!("listen.tool-failed", tool = format!("systemctl {}", args.join(" ")), why = String::from_utf8_lossy(&out.stderr).trim()).into());
+        return Err(t!(
+            "listen.tool-failed",
+            tool = format!("systemctl {}", args.join(" ")),
+            why = String::from_utf8_lossy(&out.stderr).trim()
+        )
+        .into());
     }
     Ok(())
 }

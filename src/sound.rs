@@ -261,7 +261,9 @@ impl Biquad {
     }
 
     fn run(&mut self, x: f32) -> f32 {
-        let y = self.b[0] * x + self.b[1] * self.x[0] + self.b[2] * self.x[1] - self.a[0] * self.y[0] - self.a[1] * self.y[1];
+        let y = self.b[0] * x + self.b[1] * self.x[0] + self.b[2] * self.x[1]
+            - self.a[0] * self.y[0]
+            - self.a[1] * self.y[1];
         self.x = [x, self.x[0]];
         self.y = [y, self.y[0]];
         y

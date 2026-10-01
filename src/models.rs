@@ -60,8 +60,7 @@ fn leftovers(dir: &Path) {
     let week = std::time::Duration::from_secs(7 * 24 * 3600);
     for path in entries.flatten().map(|e| e.path()) {
         let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        let Some(file) = name.strip_suffix(".part").filter(|f| f.starts_with("ggml-") && f.ends_with(".bin"))
-        else {
+        let Some(file) = name.strip_suffix(".part").filter(|f| f.starts_with("ggml-") && f.ends_with(".bin")) else {
             continue;
         };
         let age = fs::metadata(&path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
@@ -208,11 +207,8 @@ fn fetch(file: &str) -> Res<()> {
             d.done = kept;
         }
         let mut body = res.body_mut().as_reader();
-        let mut out = if kept > 0 {
-            fs::OpenOptions::new().append(true).open(&part)?
-        } else {
-            fs::File::create(&part)?
-        };
+        let mut out =
+            if kept > 0 { fs::OpenOptions::new().append(true).open(&part)? } else { fs::File::create(&part)? };
         let mut chunk = vec![0u8; 256 * 1024];
         let mut done = kept;
         loop {

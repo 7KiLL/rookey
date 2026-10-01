@@ -44,7 +44,8 @@ impl<K: Copy + Eq + Hash> Hold<K> {
             return self.pressed.take().is_some_and(|at| now - at >= TAP) && recording();
         }
         // the modifiers held besides the key itself, all of them and nothing else
-        let mut mods: Vec<&str> = self.held.iter().filter(|&&k| k != self.key).filter_map(|&k| (self.modifier)(k)).collect();
+        let mut mods: Vec<&str> =
+            self.held.iter().filter(|&&k| k != self.key).filter_map(|&k| (self.modifier)(k)).collect();
         mods.sort_by_key(|m| crate::desktop::MODS.iter().position(|x| x == m));
         mods.dedup();
         if mods != self.chord.mods() {

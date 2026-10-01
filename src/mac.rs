@@ -27,7 +27,14 @@ unsafe extern "C" {
 unsafe extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
     fn CGRequestScreenCaptureAccess() -> bool;
-    fn CGEventTapCreate(tap: u32, place: u32, options: u32, mask: u64, callback: TapCallback, user: *mut c_void) -> *mut c_void;
+    fn CGEventTapCreate(
+        tap: u32,
+        place: u32,
+        options: u32,
+        mask: u64,
+        callback: TapCallback,
+        user: *mut c_void,
+    ) -> *mut c_void;
     fn CGEventTapEnable(tap: *mut c_void, enable: bool);
     fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
     fn CGEventGetFlags(event: *mut c_void) -> u64;
@@ -180,7 +187,8 @@ unsafe extern "C" {
 pub fn mic() -> Option<bool> {
     // +[AVCaptureDevice authorizationStatusForMediaType:], through the runtime: no crate for one call
     let status = unsafe {
-        let send: unsafe extern "C" fn(Id, Id, Id) -> isize = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let send: unsafe extern "C" fn(Id, Id, Id) -> isize =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
         let class = objc_getClass(c"AVCaptureDevice".as_ptr());
         if class.is_null() {
             return None;
@@ -364,7 +372,15 @@ pub fn as_app(args: &[&str], wait: Option<Duration>) -> Res<String> {
     fs::create_dir_all(&dir)?;
     let (reply, err) = (dir.join("answer"), dir.join("err"));
     let done = (|| -> Res<String> {
-        let status = open.arg("--env").arg(format!("{ANSWER}={}", reply.display())).arg("--stderr").arg(&err).arg(&app).arg("--args").args(args).status()?;
+        let status = open
+            .arg("--env")
+            .arg(format!("{ANSWER}={}", reply.display()))
+            .arg("--stderr")
+            .arg(&err)
+            .arg(&app)
+            .arg("--args")
+            .args(args)
+            .status()?;
         if !status.success() {
             return Err(crate::t!("mac.no-start").into());
         }
@@ -450,7 +466,8 @@ const KEYS: [&str; 3] = ["ELEVENLABS_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_
 // ponytail: a Rookey that never starts leaves the file behind until the system clears the
 // temp folder; a socket handed over to it if that ever matters.
 fn hand_over_keys(var: impl Fn(&str) -> Option<String>) -> Res<Option<PathBuf>> {
-    let text: String = KEYS.iter().filter_map(|key| Some(format!("{key}={}\n", var(key).filter(|v| !v.is_empty())?))).collect();
+    let text: String =
+        KEYS.iter().filter_map(|key| Some(format!("{key}={}\n", var(key).filter(|v| !v.is_empty())?))).collect();
     if text.is_empty() {
         return Ok(None);
     }

@@ -5,9 +5,9 @@
 //! The pill is drawn here into premultiplied BGRA pixels, the byte order a Wayland ARGB8888
 //! buffer, a Windows layered window and a macOS CGImage all take; only showing them differs.
 
+use std::fs;
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
-use std::fs;
 
 use fontdue::{Font, FontSettings};
 use serde_json::Value;
@@ -41,13 +41,9 @@ const fn rgb(hex: u32) -> [f32; 3] {
 // likewise the Cyrillic half (U+0400-045F,U+0490-0491), and Martian Mono at wght=450 wdth=87
 // with only 0-9 and the colon (U+0030-003A).
 static WORDS: LazyLock<[Font; 2]> = LazyLock::new(|| {
-    [
-        font(include_bytes!("overlay/commissioner-latin.ttf")),
-        font(include_bytes!("overlay/commissioner-cyrillic.ttf")),
-    ]
+    [font(include_bytes!("overlay/commissioner-latin.ttf")), font(include_bytes!("overlay/commissioner-cyrillic.ttf"))]
 });
-static DIGITS: LazyLock<[Font; 1]> =
-    LazyLock::new(|| [font(include_bytes!("overlay/martian-mono-digits.ttf"))]);
+static DIGITS: LazyLock<[Font; 1]> = LazyLock::new(|| [font(include_bytes!("overlay/martian-mono-digits.ttf"))]);
 
 fn font(bytes: &'static [u8]) -> Font {
     Font::from_bytes(bytes, FontSettings::default()).expect("fonts are compiled in")
@@ -232,7 +228,12 @@ impl Pill {
         let room = W as f32 - pad_l - pad_r - 2.0; // the hairline stays inside the surface
         let gaps = gap * (content.len() - 1) as f32;
         // one part alone sits in a circle-ish pill, as wide as it is tall at least
-        let (pad_l, pad_r) = if content.len() == 1 { let p = (H as f32 - content[0].width(0.0)) / 2.0; (p, p) } else { (pad_l, pad_r) };
+        let (pad_l, pad_r) = if content.len() == 1 {
+            let p = (H as f32 - content[0].width(0.0)) / 2.0;
+            (p, p)
+        } else {
+            (pad_l, pad_r)
+        };
         let fixed = content.iter().filter(|p| !p.is_text()).map(|p| p.width(0.0)).sum::<f32>() + gaps;
         let widths: Vec<f32> = content.iter().map(|p| p.width(room - fixed)).collect();
         let pill_w = pad_l + widths.iter().sum::<f32>() + gaps + pad_r;
@@ -538,26 +539,60 @@ mod wayland {
 
     impl CompositorHandler for App {
         // ponytail: whole-number scales; wp_fractional_scale if 1.25x screens look soft
-        fn scale_factor_changed(&mut self, _: &Connection, qh: &QueueHandle<Self>, _: &wl_surface::WlSurface, factor: i32) {
+        fn scale_factor_changed(
+            &mut self,
+            _: &Connection,
+            qh: &QueueHandle<Self>,
+            _: &wl_surface::WlSurface,
+            factor: i32,
+        ) {
             self.scale = factor.max(1) as u32;
             self.drawn = 0;
             if self.configured {
                 self.draw(qh);
             }
         }
-        fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: wl_output::Transform) {}
+        fn transform_changed(
+            &mut self,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+            _: &wl_surface::WlSurface,
+            _: wl_output::Transform,
+        ) {
+        }
         fn frame(&mut self, _: &Connection, qh: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {
             self.draw(qh);
         }
-        fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
-        fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
+        fn surface_enter(
+            &mut self,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+            _: &wl_surface::WlSurface,
+            _: &wl_output::WlOutput,
+        ) {
+        }
+        fn surface_leave(
+            &mut self,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+            _: &wl_surface::WlSurface,
+            _: &wl_output::WlOutput,
+        ) {
+        }
     }
 
     impl LayerShellHandler for App {
         fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &LayerSurface) {
             self.exit = true;
         }
-        fn configure(&mut self, _: &Connection, qh: &QueueHandle<Self>, _: &LayerSurface, configure: LayerSurfaceConfigure, _: u32) {
+        fn configure(
+            &mut self,
+            _: &Connection,
+            qh: &QueueHandle<Self>,
+            _: &LayerSurface,
+            configure: LayerSurfaceConfigure,
+            _: u32,
+        ) {
             if let Some(at) = self.at.take() {
                 let (w, h) = configure.new_size;
                 if w > 0 && h > 0 {
@@ -645,7 +680,10 @@ mod tests {
         // the corners keep the margin, at 2x too
         assert_eq!(spot(3024.0, 1800.0, 2.0, (0.0, 0.0)), (2.0 * MARGIN as f64, 2.0 * MARGIN as f64));
         let (x, y) = spot(3024.0, 1800.0, 2.0, (100.0, 100.0));
-        assert_eq!((x + 2.0 * W as f64, y + 2.0 * H as f64), (3024.0 - 2.0 * MARGIN as f64, 1800.0 - 2.0 * MARGIN as f64));
+        assert_eq!(
+            (x + 2.0 * W as f64, y + 2.0 * H as f64),
+            (3024.0 - 2.0 * MARGIN as f64, 1800.0 - 2.0 * MARGIN as f64)
+        );
         // a screen too small for the margins puts it at the margin, not off screen
         assert_eq!(spot(100.0, 20.0, 1.0, (100.0, 100.0)), (MARGIN as f64, MARGIN as f64));
     }

@@ -151,11 +151,16 @@ mod bundle {
         if me.to_string_lossy().contains(".app/Contents/MacOS/") {
             return;
         }
-        let Some(app) = env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Caches/rookey/Rookey Settings.app")) else {
+        let Some(app) = env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Caches/rookey/Rookey Settings.app"))
+        else {
             return;
         };
         match place(&me, &app) {
-            Ok(exe) => eprintln!("rookey-window: can't run from {} ({})", app.display(), std::process::Command::new(exe).arg(url).exec()),
+            Ok(exe) => eprintln!(
+                "rookey-window: can't run from {} ({})",
+                app.display(),
+                std::process::Command::new(exe).arg(url).exec()
+            ),
             Err(e) => eprintln!("rookey-window: can't put {} together ({e})", app.display()),
         }
     }

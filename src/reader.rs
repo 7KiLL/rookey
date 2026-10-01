@@ -105,7 +105,10 @@ fn screencapture(format: &str) -> Res<Vec<u8>> {
             vlog!(2, "context: screenshot, {} KB", image.len() / 1024);
             Ok(image)
         }
-        _ => Err(crate::t!("reader.no-shot", status = out.status, why = String::from_utf8_lossy(&out.stderr).trim()).into()),
+        _ => {
+            Err(crate::t!("reader.no-shot", status = out.status, why = String::from_utf8_lossy(&out.stderr).trim())
+                .into())
+        }
     }
 }
 

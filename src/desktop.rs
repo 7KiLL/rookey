@@ -104,8 +104,20 @@ impl Chord {
     /// A key that types, with at most Shift, would swallow ordinary typing.
     pub fn check(&self) -> Res<()> {
         const TYPING: [&str; 14] = [
-            "grave", "minus", "equal", "bracketleft", "bracketright", "backslash", "semicolon",
-            "apostrophe", "comma", "period", "slash", "space", "Return", "Tab",
+            "grave",
+            "minus",
+            "equal",
+            "bracketleft",
+            "bracketright",
+            "backslash",
+            "semicolon",
+            "apostrophe",
+            "comma",
+            "period",
+            "slash",
+            "space",
+            "Return",
+            "Tab",
         ];
         let bare = self.mods.iter().all(|&m| m == "Shift");
         let types = self.key.chars().count() == 1
@@ -206,9 +218,10 @@ impl Config {
             Desktop::Niri => {
                 let text = fs::read_to_string(self.niri_file()).ok()?;
                 let chord = text.lines().find_map(|l| l.strip_prefix("// chord: "))?;
-                let file = self.files.iter().find(|f| {
-                    fs::read_to_string(f).is_ok_and(|text| text.lines().any(is_niri_include))
-                })?;
+                let file = self
+                    .files
+                    .iter()
+                    .find(|f| fs::read_to_string(f).is_ok_and(|text| text.lines().any(is_niri_include)))?;
                 Some((chord.to_string(), file.clone()))
             }
             _ => self.files.iter().find_map(|file| {
@@ -412,7 +425,9 @@ pub fn bind(chord: &str, file: Option<&str>, replace: bool, swallow: bool) -> Re
     };
     if !replace {
         if let Some((file, line, text)) = config.taken(&chord, !swallow) {
-            return Ok(json!({ "taken": { "chord": chord.to_string(), "file": tilde(&file), "line": line, "text": text } }));
+            return Ok(
+                json!({ "taken": { "chord": chord.to_string(), "file": tilde(&file), "line": line, "text": text } }),
+            );
         }
     }
 
@@ -630,7 +645,8 @@ mod tests {
 
     #[test]
     fn hotkey_comes_out_clean() {
-        let lua = "a = 1\n\n-- rookey hotkey Super+D: managed\nhl.bind(\"SUPER + D\", x)\n-- rookey hotkey end\nb = 2\n";
+        let lua =
+            "a = 1\n\n-- rookey hotkey Super+D: managed\nhl.bind(\"SUPER + D\", x)\n-- rookey hotkey end\nb = 2\n";
         assert_eq!(without_hotkey(lua), "a = 1\nb = 2\n");
         let kdl = "binds {\n}\n\ninclude \"rookey.kdl\" optional=true // rookey hotkey, set in `rookey ui`\n";
         assert_eq!(without_hotkey(kdl), "binds {\n}\n");
@@ -645,7 +661,10 @@ mod tests {
             let back = without_hotkey(&added);
             assert_eq!(back.trim_end_matches('\n'), text.trim_end_matches('\n'), "{text:?}");
         }
-        assert_eq!(reason("Error: x\n  ├─▶ invalid keybind\n  ╰─▶ invalid key: Nope\n 3 │ binds {"), "invalid key: Nope");
+        assert_eq!(
+            reason("Error: x\n  ├─▶ invalid keybind\n  ╰─▶ invalid key: Nope\n 3 │ binds {"),
+            "invalid key: Nope"
+        );
         assert_eq!(reason("==== Config parsing result:\n\nuser.lua:24: Unknown keysym"), "user.lua:24: Unknown keysym");
         assert_eq!(included("include \"~/x/rookey.kdl\" optional=true"), Some("~/x/rookey.kdl"));
         assert_eq!(strip_colors("\x1b[2mniri\x1b[0m ok"), "niri ok");
