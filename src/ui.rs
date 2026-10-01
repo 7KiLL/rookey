@@ -457,6 +457,7 @@ fn state() -> Value {
             model.is_file(),
             keys.get("ELEVENLABS_API_KEY").is_some_and(|k| !k.is_empty()) || env::var_os("ELEVENLABS_API_KEY").is_some(),
             &access(),
+            typing(),
         ),
         // the app macOS asks about, when it can be named
         "app": app(),
@@ -553,6 +554,19 @@ fn access() -> Access {
 #[cfg(not(target_os = "macos"))]
 fn access() -> Access {
     Access::default()
+}
+
+/// How this desktop takes the text, where rookey has to ask: Linux asks the compositor.
+/// "wtype", "paste" (GNOME, KDE), or None.
+fn typing() -> Option<&'static str> {
+    #[cfg(target_os = "linux")]
+    return match crate::linux::typing() {
+        crate::linux::Typing::Wtype => Some("wtype"),
+        crate::linux::Typing::Paste => Some("paste"),
+        crate::linux::Typing::None => None,
+    };
+    #[cfg(not(target_os = "linux"))]
+    None
 }
 
 /// The settings pane /api/open offers for a failing check, where this system has one.
@@ -682,6 +696,7 @@ fn checks(
     model_found: bool,
     has_key: bool,
     access: &Access,
+    typing: Option<&str>,
 ) -> Vec<Value> {
     let mut checks = Vec::new();
     let mut check = |id: &str, ok: bool, title: &str, missing: &str, fix: Option<String>| {
@@ -715,8 +730,15 @@ fn checks(
     } else {
         check("key", has_key, &t!("check.key.title"), &t!("check.key.missing", engine = engine), None);
     }
-    if cfg!(target_os = "linux") {
-        check("wtype", on_path("wtype"), &t!("check.wtype.title"), &t!("check.wtype.missing"), install("wtype"));
+    match typing {
+        Some("wtype") => {
+            check("wtype", on_path("wtype"), &t!("check.wtype.title"), &t!("check.wtype.missing"), install("wtype"))
+        }
+        // GNOME and KDE keep the virtual keyboard wtype types with to themselves
+        Some(_) => check("typing", false, &t!("check.typing.title"), &t!("check.typing.missing"), None),
+        // ponytail: a Linux page with no Wayland session around it can't tell; the hotkey's
+        // typing says why itself
+        None => {}
     }
     // macOS pastes through System Events: Accessibility for the keys, Automation for the events
     if let Some(ok) = access.typing {
@@ -1347,13 +1369,32 @@ PATH=/tmp"}"#,
     fn silent_mic_is_its_own_check() {
         let none = |_: &str| String::new();
         let silent = |there: bool, heard| {
-            checks(&none, (there, None), heard, true, true, &Access::default()).iter().any(|c| c["id"] == "mic-silent")
+            checks(&none, (there, None), heard, true, true, &Access::default(), None)
+                .iter()
+                .any(|c| c["id"] == "mic-silent")
         };
         assert!(silent(true, Some(false)));
         // only for a mic that is there: a missing one already says so
         assert!(!silent(false, Some(false)));
         assert!(!silent(true, Some(true)));
         assert!(!silent(true, None)); // not listened to yet
+    }
+
+    #[test]
+    fn typing_rows_follow_the_desktop() {
+        let none = |_: &str| String::new();
+        let rows = |typing| -> Vec<(String, bool)> {
+            checks(&none, (true, None), Some(true), true, true, &Access::default(), typing)
+                .iter()
+                .map(|c| (c["id"].as_str().unwrap().to_string(), c["ok"] == true))
+                .filter(|(id, _)| id == "wtype" || id == "typing")
+                .collect()
+        };
+        let wtype = rows(Some("wtype"));
+        assert!(wtype.len() == 1 && wtype[0].0 == "wtype", "{wtype:?}");
+        // GNOME and KDE: wtype can't type there, so it isn't asked for
+        assert_eq!(rows(Some("paste")), [("typing".to_string(), false)]);
+        assert!(rows(None).is_empty());
     }
 
     #[test]
@@ -1415,7 +1456,7 @@ PATH=/tmp"}"#,
         let screen = |k: &str| if k == "ROOKEY_CONTEXT" { "1".to_string() } else { String::new() };
         let denied = Access { mic: Some(false), screen: Some(false), typing: Some(false), automation: Some(false) };
         let ids = |access: &Access, heard| -> Vec<(String, bool)> {
-            checks(&screen, (true, None), heard, true, true, access)
+            checks(&screen, (true, None), heard, true, true, access, None)
                 .iter()
                 .map(|c| (c["id"].as_str().unwrap().to_string(), c["ok"] == true))
                 .collect()

@@ -67,6 +67,7 @@ The README in the rookey repository lists every setting.
 Common causes:
 
 - **Nothing typed from the hotkey, but it works in the terminal.** The hotkey doesn't see the shell's environment: move the key into the keys file (`rookey ui` does it). On macOS, check the permissions on the settings page (microphone, Accessibility, Automation of System Events). They belong to *Rookey*, the small app rookey runs as, not to the terminal.
+- **Nothing typed on Linux.** `rookey status --json` says why: `wtype` is missing, there's no Wayland session, or the desktop is GNOME or KDE, where rookey can't type yet. The text is in `rookey history` either way.
 - **"heard no words".** The wrong microphone, or it's muted. On macOS, microphone access may be off for Rookey.
 - **Two recordings at once, or it starts and stops immediately.** Both `rookey listen` and a desktop bind of `rookey toggle` are on the same keys. `rookey ui` keeps only one.
 - **Slow on `local`.** A large model on a CPU build. Suggest a smaller model in `rookey setup`, or `elevenlabs-realtime`.
