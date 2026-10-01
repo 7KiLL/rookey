@@ -16,7 +16,7 @@ use std::{fs, thread};
 
 use evdev::{EventSummary, KeyCode};
 
-use crate::Res;
+use crate::{Res, t};
 use crate::desktop::Chord;
 use crate::hold::{Hold, recording, toggle};
 
@@ -98,17 +98,17 @@ pub fn access() -> Option<String> {
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().starts_with("event"))
         .any(|e| fs::File::open(e.path()).is_ok());
-    (!readable).then(|| "Your user can't read the keyboards. Add it to the input group, then log out and back in.".into())
+    (!readable).then(|| t!("listen.input-group"))
 }
 
 pub fn run() -> Res<()> {
-    let chord = crate::setting("ROOKEY_HOTKEY").ok_or("no ROOKEY_HOTKEY set, pick the keys in `rookey ui`")?;
+    let chord = crate::setting("ROOKEY_HOTKEY").ok_or_else(|| t!("listen.no-hotkey"))?;
     let chord = Chord::parse(&chord)?;
-    let key = key_code(chord.key()).ok_or_else(|| format!("rookey can't listen for {}, that key has no known code", chord.key()))?;
+    let key = key_code(chord.key()).ok_or_else(|| t!("server.key-unknown", key = chord.key()))?;
     if let Some(why) = access() {
         return Err(why.into());
     }
-    eprintln!("rookey listen: hold {chord} to talk, tap it to keep talking");
+    eprintln!("{}", t!("listen.started", chord = chord));
     crate::update::in_background(true);
 
     let (tx, rx) = mpsc::channel();
@@ -216,7 +216,7 @@ fn unit_path() -> Option<PathBuf> {
 fn systemctl(args: &[&str]) -> Res<()> {
     let out = Command::new("systemctl").arg("--user").args(args).output()?;
     if !out.status.success() {
-        return Err(format!("systemctl {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()).into());
+        return Err(t!("listen.tool-failed", tool = format!("systemctl {}", args.join(" ")), why = String::from_utf8_lossy(&out.stderr).trim()).into());
     }
     Ok(())
 }
@@ -240,7 +240,7 @@ pub fn start() -> Res<()> {
          WantedBy=graphical-session.target\n",
         exe.display()
     );
-    let path = unit_path().ok_or("no config directory for the service")?;
+    let path = unit_path().ok_or_else(|| t!("listen.no-service-dir"))?;
     fs::create_dir_all(path.parent().unwrap())?;
     fs::write(&path, unit)?;
     systemctl(&["daemon-reload"])?;

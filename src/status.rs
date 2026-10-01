@@ -13,7 +13,7 @@ use std::{fs, thread};
 
 use serde_json::{Value, json};
 
-use crate::Res;
+use crate::{Res, t};
 
 /// How long "typed" is shown after the text went out.
 pub const TYPED_MS: u64 = 1200;
@@ -111,9 +111,10 @@ pub fn clock(seconds: u64) -> String {
 /// A line for people: `listening 0:04`.
 pub fn text(now: &Value) -> String {
     match now["state"].as_str().unwrap_or("idle") {
-        "listening" => format!("listening {}", clock(now["seconds"].as_u64().unwrap_or(0))),
-        "typed" => format!("typed {} words", now["words"]),
-        "failed" => format!("failed: {}", now["reason"].as_str().unwrap_or("")),
+        "listening" => t!("line.listening", clock = clock(now["seconds"].as_u64().unwrap_or(0))),
+        "typed" => t!("line.typed", n = now["words"].as_u64().unwrap_or(0)),
+        "failed" => t!("line.failed", why = now["reason"].as_str().unwrap_or("")),
+        state @ ("idle" | "transcribing") => t!(&format!("line.{state}")),
         state => state.to_string(),
     }
 }
@@ -188,5 +189,8 @@ mod tests {
         assert_eq!((bar["text"].as_str(), bar["class"].as_str()), (Some("1:04"), Some("listening")));
         assert_eq!(waybar(&json!({"state": "typed", "words": 3}))["text"], "3 words");
         assert_eq!(text(&json!({"state": "failed", "reason": "no key"})), "failed: no key");
+        assert_eq!(text(&json!({"state": "typed", "words": 1})), "typed 1 word");
+        assert_eq!(text(&json!({"state": "typed", "words": 4})), "typed 4 words");
+        assert_eq!(text(&json!({"state": "idle"})), "idle");
     }
 }

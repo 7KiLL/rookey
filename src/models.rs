@@ -129,11 +129,11 @@ pub fn cancel() {
 /// Starts fetching a model from the catalog into rookey's directory. One at a time.
 pub fn download(file: &str) -> Res<()> {
     if !CATALOG.iter().any(|known| known.0 == file) {
-        return Err(format!("{file} is not a model rookey knows where to get.").into());
+        return Err(crate::t!("models.unknown", file = file).into());
     }
     let mut slot = DOWNLOAD.lock().unwrap();
     if let Some(running) = slot.as_ref().filter(|d| d.running) {
-        return Err(format!("{} is still downloading.", running.file).into());
+        return Err(crate::t!("models.busy", file = running.file).into());
     }
     *slot = Some(Download { file: file.into(), running: true, ..Default::default() });
     CANCEL.store(false, Ordering::SeqCst);
@@ -217,7 +217,7 @@ fn fetch(file: &str) -> Res<()> {
         let mut done = kept;
         loop {
             if CANCEL.load(Ordering::SeqCst) {
-                return Err("Stopped.".into());
+                return Err(crate::t!("models.stopped").into());
             }
             let n = body.read(&mut chunk)?;
             if n == 0 {
@@ -231,11 +231,11 @@ fn fetch(file: &str) -> Res<()> {
         }
         out.sync_all()?;
         if total != 0 && done < total {
-            return Err(format!("The download broke off at {done} of {total} bytes. Try again to go on from there.").into());
+            return Err(crate::t!("models.broke-off", done = done, total = total).into());
         }
         if (total != 0 && done > total) || !is_model(&part) {
             fs::remove_file(&part)?;
-            return Err("What came down is not a whisper model. Try again to start over.".into());
+            return Err(crate::t!("models.not-model").into());
         }
         Ok(())
     })();

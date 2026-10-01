@@ -3,6 +3,7 @@
 //! `rookey ui` opens, so no other page in the browser can reach it, and a saved API key is
 //! never sent back.
 
+use crate::t;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -44,34 +45,31 @@ const SETTINGS: [&str; 25] = [
     // the settings page's own look; empty follows the system and the browser
     "ROOKEY_UI_THEME",
     "ROOKEY_UI_LANG",
-    "ROOKEY_UI_ADVANCED", // whether Advanced is open
+    "ROOKEY_UI_CLOSED", // the sections folded shut, comma-separated; empty opens all
 ];
 // kept in the config, not the browser: every `rookey ui` gets a new port, so a new origin
 const UI_THEMES: [&str; 2] = ["light", "dark"];
-const UI_LANGS: [&str; 2] = ["en", "uk"]; // the languages in ui/i18n.js
+const UI_SECTIONS: [&str; 5] = ["hotkey", "engine", "typed", "talk", "system"]; // app.js Settings()
 const BACKENDS: [&str; 3] = ["local", "elevenlabs", "elevenlabs-realtime"];
 
-/// (id, name, the setting its key goes by, what rookey uses it for, where keys are made)
-const PROVIDERS: [(&str, &str, &str, &str, &str); 3] = [
+/// (id, name, the setting its key goes by, where keys are made); what it's for is `provider.<id>`
+const PROVIDERS: [(&str, &str, &str, &str); 3] = [
     (
         "elevenlabs",
         "ElevenLabs",
         "ELEVENLABS_API_KEY",
-        "Turns your speech into text, and does the cleanup.",
         "https://elevenlabs.io/app/developers/api-keys",
     ),
     (
         "openai",
         "OpenAI",
         "OPENAI_API_KEY",
-        "Reads the screen for terms.",
         "https://platform.openai.com/api-keys",
     ),
     (
         "anthropic",
         "Claude",
         "ANTHROPIC_API_KEY",
-        "Reads the screen for terms.",
         "https://platform.claude.com/settings/keys",
     ),
 ];
@@ -126,12 +124,12 @@ pub fn run(open: bool, browser: bool) -> Res<()> {
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     let token = token()?;
     let url = format!("http://{}/?t={token}", listener.local_addr()?);
-    eprintln!("rookey ui: {url}");
-    eprintln!("stops when you close the page, or with Ctrl-C");
+    eprintln!("{}", t!("server.url", url = url));
+    eprintln!("{}", t!("server.stops"));
     crate::update::in_background(false);
     if open {
         if let Err(e) = open_browser(&url, browser) {
-            eprintln!("rookey ui: couldn't open a browser ({e}), open the link above");
+            eprintln!("{}", t!("server.no-browser", why = e));
         }
     }
     for stream in listener.incoming().flatten() {
@@ -245,13 +243,16 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
         if let Some((_, kind, body)) = ASSETS.iter().find(|a| a.0 == req.path) {
             return respond(stream, "200 OK", kind, body);
         }
+        if req.path == "/locales.json" {
+            return respond(stream, "200 OK", "application/json; charset=utf-8", crate::i18n::all_json().as_bytes());
+        }
     }
     if !req.path.starts_with("/api/") {
         return respond(stream, "404 Not Found", "text/plain", b"not found");
     }
     let sent = req.query.split('&').find_map(|p| p.strip_prefix("t=")).unwrap_or_default();
     if !same(sent, token) {
-        return error(stream, "403 Forbidden", "This link has expired. Run rookey ui again.");
+        return error(stream, "403 Forbidden", &t!("server.expired"));
     }
     let done = match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/api/alive") => return alive(stream),
@@ -262,7 +263,7 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
         ("GET", "/api/update") => Ok(update::state()),
         ("POST", "/api/save") => match changes(&req.body) {
             Ok(changes) => config_path()
-                .ok_or_else(|| "This system has no place for a settings file.".into())
+                .ok_or_else(|| t!("server.no-settings-file").into())
                 .and_then(|path| write(&path, &changes))
                 .map(|()| state()),
             Err(e) => return error(stream, "400 Bad Request", &e.to_string()),
@@ -280,13 +281,13 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
                 }
                 "/api/history" if asked["clear"] == true => crate::history::path()
                     .map_or(Ok(()), |p| crate::history::clear(&p))
-                    .map_err(|e| format!("Can't clear the history: {e}").into())
+                    .map_err(|e| t!("server.history-clear", why = e).into())
                     .map(|()| history()),
-                _ => return error(stream, "404 Not Found", "No such thing here."),
+                _ => return error(stream, "404 Not Found", &t!("server.not-found")),
             },
             Err(e) => return error(stream, "400 Bad Request", &e.to_string()),
         },
-        _ => return error(stream, "404 Not Found", "No such thing here."),
+        _ => return error(stream, "404 Not Found", &t!("server.not-found")),
     };
     match done {
         Ok(body) => respond_json(stream, "200 OK", &body),
@@ -298,7 +299,7 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
 /// Plays a cue the way a recording would, with the settings as saved.
 fn play(asked: &Value) -> Res<()> {
     let name = asked["cue"].as_str().unwrap_or_default();
-    let cue = sound::Cue::ALL.into_iter().find(|c| c.name() == name).ok_or("No such sound.")?;
+    let cue = sound::Cue::ALL.into_iter().find(|c| c.name() == name).ok_or_else(|| t!("server.no-sound"))?;
     let settings = read(config_path());
     let get = |k: &str| env::var(k).ok().or_else(|| settings.get(k).cloned()).filter(|v| !v.is_empty());
     sound::play(cue, get);
@@ -362,7 +363,7 @@ fn alive(mut stream: &TcpStream) -> Res<()> {
     if PAGES.fetch_sub(1, Ordering::SeqCst) == 1 {
         thread::sleep(Duration::from_secs(3)); // a reload comes back within this
         if PAGES.load(Ordering::SeqCst) == 0 {
-            eprintln!("rookey ui: page closed, stopping");
+            eprintln!("{}", t!("server.closed"));
             std::process::exit(0);
         }
     }
@@ -401,11 +402,11 @@ fn state() -> Value {
 
     let providers: Vec<Value> = PROVIDERS
         .iter()
-        .map(|&(id, name, var, does, site)| {
+        .map(|&(id, name, var, site)| {
             let key = keys.get(var).cloned().unwrap_or_default();
             let hint = masked(&key);
             json!({
-                "id": id, "name": name, "var": var, "does": does, "site": site,
+                "id": id, "name": name, "var": var, "does": t!(&format!("provider.{id}")), "site": site,
                 "saved": !key.is_empty(), "hint": hint, "env": env::var_os(var).is_some(),
                 // still in the settings file, where dotfile managers would pick it up
                 "exposed": settings.contains_key(var),
@@ -603,7 +604,7 @@ fn pane(what: &str, os: &str, on_path: &dyn Fn(&str) -> bool) -> Option<(&'stati
 /// that puts the app in the pane's list, where the switch is.
 fn open_pane(asked: &Value) -> Res<()> {
     let what = asked["what"].as_str().unwrap_or_default();
-    let (program, args) = pane(what, env::consts::OS, &on_path).ok_or("There is no such settings page here.")?;
+    let (program, args) = pane(what, env::consts::OS, &on_path).ok_or_else(|| t!("server.no-pane"))?;
     #[cfg(target_os = "macos")]
     match what {
         "screen-privacy" => crate::mac::ask_screen(),
@@ -687,15 +688,18 @@ fn checks(get: &dyn Fn(&str) -> String, mic: (bool, Option<String>), heard: Opti
         }));
     };
     let (mic, name) = mic;
-    let title = name.map_or("Microphone".to_string(), |n| format!("Microphone: {n}"));
-    check("mic", mic, &title, "No microphone is plugged in, or none is set as the default.", None);
+    // the page's own words, filled in here as plain text: {app} and {engine} are links there
+    let app = t!("check.app.unknown");
+    let engine = t!("engine.title");
+    let title = name.map_or(t!("check.mic.title"), |n| t!("check.mic.named", name = n));
+    check("mic", mic, &title, &t!("check.mic.missing"), None);
     let allowed = access.mic != Some(false);
     if !allowed {
         check(
             "mic-access",
             false,
-            "Microphone access",
-            "macOS keeps the microphone from the app you started rookey ui from. Turn it on under Privacy & Security > Microphone, then check again.",
+            &t!("check.mic-access.title"),
+            &t!("check.mic-access.missing", app = app),
             None,
         );
     }
@@ -706,28 +710,28 @@ fn checks(get: &dyn Fn(&str) -> String, mic: (bool, Option<String>), heard: Opti
         check(
             "mic-silent",
             false,
-            "Sound from the microphone",
-            "It sent only silence. Turn it on and unmute it, allow microphone access in the system's privacy settings, then speak and check again.",
+            &t!("check.mic-silent.title"),
+            &t!("check.mic-silent.missing"),
             None,
         );
     }
 
     let backend = env::var("ROOKEY_BACKEND").unwrap_or_else(|_| get("ROOKEY_BACKEND"));
     if backend.is_empty() || backend == "local" {
-        check("model", model_found, "Speech model", "The model isn't downloaded yet. Download it under Engine.", None);
+        check("model", model_found, &t!("check.model.title"), &t!("check.model.missing"), None);
     } else {
-        check("key", has_key, "ElevenLabs key", "There is no ElevenLabs key yet. Add yours under Engine.", None);
+        check("key", has_key, &t!("check.key.title"), &t!("check.key.missing", engine = engine), None);
     }
     if cfg!(target_os = "linux") {
-        check("wtype", on_path("wtype"), "Typing into windows", "wtype is missing, so the text can't be typed for you.", install("wtype"));
+        check("wtype", on_path("wtype"), &t!("check.wtype.title"), &t!("check.wtype.missing"), install("wtype"));
     }
     // macOS pastes through System Events: Accessibility for the keys, Automation for the events
     if let Some(ok) = access.typing {
         check(
             "typing-access",
             ok,
-            "Typing into windows",
-            "The app you started rookey ui from isn't allowed to type for you. Turn it on under Privacy & Security > Accessibility. The first time rookey types, macOS also asks to let it control System Events: allow that too. The app that runs your hotkey needs both as well.",
+            &t!("check.typing-access.title"),
+            &t!("check.typing-access.missing", app = app),
             None,
         );
     }
@@ -735,8 +739,8 @@ fn checks(get: &dyn Fn(&str) -> String, mic: (bool, Option<String>), heard: Opti
         check(
             "automation",
             false,
-            "Control of System Events",
-            "The app you started rookey ui from was refused control of System Events, which rookey pastes through. Turn it on under Privacy & Security > Automation.",
+            &t!("check.automation.title"),
+            &t!("check.automation.missing", app = app),
             None,
         );
     }
@@ -746,8 +750,8 @@ fn checks(get: &dyn Fn(&str) -> String, mic: (bool, Option<String>), heard: Opti
             check(
                 "screen-access",
                 ok,
-                "Recording the screen",
-                "The app you started rookey ui from may not record the screen, so screen terms can't read it. Turn it on under Privacy & Security > Screen & System Audio Recording, then quit and reopen that app and run rookey ui again.",
+                &t!("check.screen-access.title"),
+                &t!("check.screen-access.missing", app = app),
                 None,
             );
         }
@@ -779,19 +783,19 @@ fn checks(get: &dyn Fn(&str) -> String, mic: (bool, Option<String>), heard: Opti
         let fix = needed.into_iter().collect::<Option<Vec<_>>>().and_then(|p| Some(format!("{} {}", installer()?, p.join(" "))));
         let mut words = Vec::new();
         if !missing.is_empty() {
-            words.push(format!("{} missing, so the screen can't be read.", missing.join(" and ") + if missing.len() > 1 { " are" } else { " is" }));
+            words.push(t!("check.screen.missing", tools = missing.join(", ")));
         }
         if !no_pack.is_empty() {
-            words.push(format!("Tesseract can't read {} yet: without the language pack, that text turns into junk terms.", no_pack.join(" and ")));
+            words.push(t!("check.screen.langs", langs = no_pack.join(", ")));
             if cfg!(windows) {
-                words.push("Run the Tesseract installer again and tick them under Additional language data, or put their .traineddata files into its tessdata folder.".into());
+                words.push(t!("check.screen.langs.windows"));
             }
         }
         check(
             "screen",
             // a missing language pack is optional: the page notes it under the switch, not as a failure
             missing.is_empty(),
-            "Reading the screen",
+            &t!("check.screen.title"),
             &words.join(" "),
             fix.clone(),
         );
@@ -896,89 +900,88 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
     let mut changes = Vec::new();
     for (key, value) in sent {
         if !SETTINGS.contains(&key.as_str()) {
-            return Err(format!("{key} is not a setting.").into());
+            return Err(t!("server.not-setting", key = key).into());
         }
-        let value = value.as_str().ok_or("Settings are text.")?;
+        let value = value.as_str().ok_or_else(|| t!("server.text"))?;
         // the file is one setting per line
         let value = value.replace(|c: char| c.is_control(), " ");
         let mut value = value.trim().to_string();
         match key.as_str() {
             "ROOKEY_BACKEND" if !value.is_empty() && !BACKENDS.contains(&value.as_str()) => {
-                return Err(format!("There is no engine called {value}.").into());
+                return Err(t!("server.no-engine", value = value).into());
             }
             "ROOKEY_READER" if !value.is_empty() && !reader::READERS.contains(&value.as_str()) => {
-                return Err(format!("Nothing called {value} reads screens here.").into());
+                return Err(t!("server.no-reader", value = value).into());
             }
             // one language, or several to choose between: "en" or "en,uk"
             "ROOKEY_LANG" => {
                 value = value.to_lowercase().split(',').map(str::trim).filter(|c| !c.is_empty()).collect::<Vec<_>>().join(",");
                 let code = |c: &str| (2..=3).contains(&c.len()) && c.chars().all(|c| c.is_ascii_lowercase());
                 if !value.split(',').all(|c| c.is_empty() || c == "auto" || code(c)) {
-                    return Err(format!("{value} isn't a language code, those are two or three letters like en or uk.").into());
+                    return Err(t!("server.lang-code", value = value).into());
                 }
             }
             // switches: on or unset, nothing else
             "ROOKEY_QUIET" | "ROOKEY_NO_NOTIFICATIONS" | "ROOKEY_NO_OVERLAY" if !matches!(value.as_str(), "" | "1") => {
-                return Err(format!("{key} is a switch, 1 or nothing.").into());
+                return Err(t!("server.switch", key = key).into());
             }
             "ROOKEY_HISTORY" if !matches!(value.as_str(), "" | "0") => {
-                return Err("ROOKEY_HISTORY is 0 to keep no history, or nothing to keep it.".into());
+                return Err(t!("server.history").into());
             }
             "ROOKEY_PILL" if !value.is_empty() && !crate::overlay::STYLES.contains(&value.as_str()) => {
-                return Err(format!("The pill comes as {}, not {value}.", crate::overlay::STYLES.join(", ")).into());
+                return Err(t!("server.pill-style", styles = crate::overlay::STYLES.join(", "), value = value).into());
             }
             "ROOKEY_PILL_AT" if !value.is_empty() && crate::overlay::parse_at(&value).is_none() => {
-                return Err("The pill's place is two numbers from 0 to 100, like 50,100 for the bottom centre.".into());
+                return Err(t!("server.pill-at").into());
             }
             "ROOKEY_SOUNDS" if !value.is_empty() && !sound::SETS.contains(&value.as_str()) => {
-                return Err(format!("There are no {value} sounds, only {}.", sound::SETS.join(", ")).into());
+                return Err(t!("server.sounds", value = value, sets = sound::SETS.join(", ")).into());
             }
             key if key.starts_with("ROOKEY_SOUND_") && !value.is_empty() => {
                 if let Some(rest) = value.strip_prefix("~/") {
-                    let home = dirs::home_dir().ok_or("Can't tell where ~ is, use the full path.")?;
+                    let home = dirs::home_dir().ok_or_else(|| t!("server.home"))?;
                     value = home.join(rest).display().to_string();
                 }
                 if !Path::new(&value).is_file() {
-                    return Err(format!("There's no sound file at {value}.").into());
+                    return Err(t!("server.no-sound-file", value = value).into());
                 }
             }
             "ROOKEY_UI_THEME" if !value.is_empty() && !UI_THEMES.contains(&value.as_str()) => {
-                return Err(format!("There is no {value} theme, only light and dark.").into());
+                return Err(t!("server.theme", value = value).into());
             }
-            "ROOKEY_UI_LANG" if !value.is_empty() && !UI_LANGS.contains(&value.as_str()) => {
-                return Err(format!("The page isn't written in {value}.").into());
+            "ROOKEY_UI_LANG" if !value.is_empty() && !crate::i18n::known(&value) => {
+                return Err(t!("server.ui-lang", value = value).into());
+            }
+            "ROOKEY_UI_CLOSED" if value.split(',').any(|id| !id.is_empty() && !UI_SECTIONS.contains(&id)) => {
+                return Err(t!("server.sections", value = value).into());
             }
             "ROOKEY_EDIT" | "ROOKEY_EDIT_CUSTOM" if value.chars().count() > MAX_EDIT => {
-                return Err(format!(
-                    "The rewrite instruction is {} characters long, ElevenLabs takes {MAX_EDIT}.",
-                    value.chars().count()
-                )
-                .into());
+                return Err(t!("server.edit-long", n = value.chars().count(), max = MAX_EDIT).into());
             }
             "ROOKEY_WORDS" => {
                 let mut words: Vec<&str> = Vec::new();
                 for word in value.split(',').map(str::trim).filter(|w| !w.is_empty()) {
                     if word.chars().count() > MAX_WORD || word.split_whitespace().count() > 5 {
-                        return Err(format!("\"{word}\" is too long, a word or name takes up to 5 words and {MAX_WORD} characters.").into());
+                        return Err(t!("server.word-long", word = word, max = MAX_WORD).into());
                     }
                     if word.contains(['<', '>', '{', '}', '[', ']', '\\']) {
-                        return Err(format!("\"{word}\" has a bracket or a backslash, the engines leave those out.").into());
+                        return Err(t!("server.word-bracket", word = word).into());
                     }
                     if !words.contains(&word) {
                         words.push(word);
                     }
                 }
                 if words.len() > MAX_WORDS {
-                    return Err(format!("That's {} words, rookey takes {MAX_WORDS}.", words.len()).into());
+                    return Err(t!("server.words-many", n = words.len(), max = MAX_WORDS).into());
                 }
                 value = words.join(",");
             }
             "ROOKEY_KEEP_CLIPBOARD" | "ROOKEY_AUTOUPDATE" if !matches!(value.as_str(), "" | "0" | "1") => {
-                return Err(format!("{key} is on by default, 0 turns it off.").into());
+                return Err(t!("server.on-default", key = key).into());
             }
             // rookey opens this path as it is, and only a shell knows what ~ means
             "ROOKEY_MODEL" if value.starts_with("~/") => {
-                let home = dirs::home_dir().ok_or("Can't tell where ~ is, use the full path.")?;
+                let home = dirs::home_dir().ok_or_else(|| t!("server.home"))?;
                 value = home.join(&value[2..]).display().to_string();
             }
             _ => {}
@@ -992,12 +995,12 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
 /// older rookey left it there.
 fn save_key(asked: &Value) -> Res<()> {
     let id = asked["provider"].as_str().unwrap_or_default();
-    let var = PROVIDERS.iter().find(|p| p.0 == id).ok_or("No such provider.")?.2;
-    let key = asked["key"].as_str().ok_or("The key is text.")?.trim();
+    let var = PROVIDERS.iter().find(|p| p.0 == id).ok_or_else(|| t!("server.no-provider"))?.2;
+    let key = asked["key"].as_str().ok_or_else(|| t!("server.key-text"))?.trim();
     if key.chars().any(|c| c.is_control() || c.is_whitespace()) {
-        return Err("A key has no spaces or line breaks in it. Paste it again?".into());
+        return Err(t!("server.key-spaces").into());
     }
-    let path = keys_path().ok_or("This system has no place for a keys file.")?;
+    let path = keys_path().ok_or_else(|| t!("server.no-keys-file"))?;
     write(&path, &[(var.to_string(), key.to_string())])?;
     match config_path() {
         Some(settings) if read(Some(settings.clone())).contains_key(var) => {
@@ -1012,7 +1015,7 @@ fn model(asked: &Value) -> Res<()> {
         models::cancel();
         return Ok(());
     }
-    models::download(asked["download"].as_str().ok_or("Which model?")?)
+    models::download(asked["download"].as_str().ok_or_else(|| t!("server.which-model"))?)
 }
 
 /// The hotkey rookey listens for itself: its keys, whether the service runs, and why it
@@ -1035,7 +1038,7 @@ fn listening(get: &dyn Fn(&str) -> String) -> Value {
 /// One hotkey at a time: the compositor's bind and rookey's own listening both run
 /// `rookey toggle`, and one press would start and stop it at once.
 fn hotkey(asked: &Value) -> Res<Value> {
-    let settings = config_path().ok_or("no config directory")?;
+    let settings = config_path().ok_or_else(|| t!("server.no-config-dir"))?;
     if asked["unbind"] == true {
         desktop::unbind()?;
         return Ok(state());
@@ -1051,7 +1054,7 @@ fn hotkey(asked: &Value) -> Res<Value> {
         write(&settings, &[("ROOKEY_HOTKEY".into(), String::new())])?;
         return Ok(state());
     }
-    let chord = asked["chord"].as_str().ok_or("Which keys?")?;
+    let chord = asked["chord"].as_str().ok_or_else(|| t!("server.which-keys"))?;
     if asked["listen"] == true {
         return listen(&settings, chord, asked["replace"] == true);
     }
@@ -1071,10 +1074,10 @@ fn listen(settings: &Path, chord: &str, replace: bool) -> Res<Value> {
     // alone, these go down with every capital letter and every shortcut
     let busy = ["Shift_L", "Shift_R", "Control_L", "Alt_L", "Super_L"];
     if chord.mods().is_empty() && busy.iter().any(|k| k.eq_ignore_ascii_case(chord.key())) {
-        return Err(format!("{chord} alone goes down all the time while you type. Pick a key you keep spare, like Control_R or Alt_R.").into());
+        return Err(t!("server.key-busy", chord = chord).into());
     }
     if crate::listen::key_code(chord.key()).is_none() {
-        return Err(format!("rookey can't listen for {}, it doesn't know that key's code.", chord.key()).into());
+        return Err(t!("server.key-unknown", key = chord.key()).into());
     }
     if let Some(why) = crate::listen::access() {
         return Err(why.into());
@@ -1094,7 +1097,7 @@ fn listen(settings: &Path, chord: &str, replace: bool) -> Res<Value> {
     // A modifier alone types nothing, and compositors can't bind one anyway.
     if !crate::listen::is_modifier(chord.key()) && desktop::writable() {
         if let Err(e) = desktop::bind(&chord.to_string(), None, true, true) {
-            eprintln!("rookey ui: the keys still reach the windows: {e}");
+            eprintln!("{}", t!("server.keys-reach", why = e));
         }
     }
     Ok(state())
@@ -1137,7 +1140,7 @@ fn try_it(asked: &Value) -> Res<()> {
         return Ok(());
     }
     if matches!(trial.phase, "listening" | "working") {
-        return Err("A test is running already.".into());
+        return Err(t!("server.test-running").into());
     }
     let (stop, stopped) = mpsc::channel();
     *trial = Trial { stop: Some(stop.clone()), ..Trial::new("listening") };
@@ -1172,10 +1175,10 @@ fn write(path: &Path, changes: &[(String, String)]) -> Res<()> {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         // unreadable is not empty: writing now would wipe what is in there
-        Err(e) => return Err(format!("Can't read {}: {e}", tilde(&path)).into()),
+        Err(e) => return Err(t!("server.cant-read", path = tilde(&path), why = e).into()),
     };
     write_private(&path, &update_config(&text, changes))
-        .map_err(|e| format!("Can't write {}: {e}", tilde(&path)).into())
+        .map_err(|e| t!("server.cant-write", path = tilde(&path), why = e).into())
 }
 
 /// Replaces the file in one step, readable by its owner only: it may hold API keys.
@@ -1324,6 +1327,9 @@ PATH=/tmp"}"#] {
         assert_eq!(changes(sent.as_bytes()).unwrap(), [change("ROOKEY_SOUND_STOP", &here)]);
         assert_eq!(changes(br#"{"ROOKEY_NO_OVERLAY": "1"}"#).unwrap(), [change("ROOKEY_NO_OVERLAY", "1")]);
         assert!(changes(br#"{"ROOKEY_UI_LANG": "xx"}"#).is_err());
+        assert!(changes(br#"{"ROOKEY_UI_CLOSED": "engine,nope"}"#).is_err());
+        assert!(changes(br#"{"ROOKEY_UI_CLOSED": "engine,typed"}"#).is_ok());
+        assert!(changes(br#"{"ROOKEY_UI_CLOSED": ""}"#).is_ok());
         assert_eq!(changes(br#"{"ROOKEY_UI_THEME": "dark"}"#).unwrap(), [change("ROOKEY_UI_THEME", "dark")]);
         assert!(changes(format!(r#"{{"ROOKEY_EDIT": "{}"}}"#, "x".repeat(2001)).as_bytes()).is_err());
         let ok = changes(br#"{"ROOKEY_EDIT": " one\ntwo ", "ROOKEY_BACKEND": ""}"#).unwrap();
@@ -1444,32 +1450,5 @@ PATH=/tmp"}"#] {
         assert_eq!(responsible_app(table, 702), None);
         assert_eq!(responsible_app(table, 999), None);
         assert_eq!(responsible_app("garbage\n\n", 1), None);
-    }
-
-    #[test]
-    fn every_language_has_every_sentence() {
-        let page = include_str!("ui/i18n.js");
-        let keys = |block: &str| -> Vec<String> {
-            let start = page.find(&format!("const {block} = {{")).unwrap();
-            let body = &page[start..start + page[start..].find("\n};").unwrap()];
-            let mut keys: Vec<String> = body.lines().filter_map(|l| Some(l.trim().strip_prefix('"')?.split('"').next()?.to_string())).collect();
-            keys.sort();
-            keys
-        };
-        let en = keys("en");
-        assert!(en.len() > 100);
-        assert_eq!(en, keys("uk"));
-        // the languages are named in three places, and all three must agree
-        let listed = |start: &str| -> Vec<String> {
-            let at = page.find(start).unwrap() + start.len();
-            let body = &page[at..at + page[at..].find('}').unwrap()];
-            let mut ids: Vec<String> = body.split(',').filter_map(|p| Some(p.split(':').next()?.trim().to_string())).filter(|p| !p.is_empty()).collect();
-            ids.sort();
-            ids
-        };
-        let mut allowed: Vec<String> = UI_LANGS.iter().map(|l| l.to_string()).collect();
-        allowed.sort();
-        assert_eq!(listed("export const LOCALES = {"), allowed, "LOCALES in i18n.js and UI_LANGS differ");
-        assert_eq!(listed("const WORDS = {"), allowed, "WORDS in i18n.js and UI_LANGS differ");
     }
 }

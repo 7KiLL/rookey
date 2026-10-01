@@ -55,7 +55,7 @@ pub fn run() -> crate::Res<()> {
             std::ptr::null(),
         );
         if hwnd.is_null() {
-            return Err("couldn't make the overlay window".into());
+            return Err(crate::t!("overlay.no-window").into());
         }
 
         let screen = GetDC(std::ptr::null_mut());
@@ -73,7 +73,7 @@ pub fn run() -> crate::Res<()> {
         let mut bits = std::ptr::null_mut();
         let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, std::ptr::null_mut(), 0);
         if bitmap.is_null() || bits.is_null() {
-            return Err("couldn't make the overlay's pixels".into());
+            return Err(crate::t!("overlay.no-pixels").into());
         }
         let old = SelectObject(dc, bitmap);
         let px = std::slice::from_raw_parts_mut(bits.cast::<u8>(), (w * h * 4) as usize);

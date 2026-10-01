@@ -37,7 +37,8 @@ cargo test --release                                               # CPU
 | `.github/workflows/release.yml`, `cliff.toml` | A `v*` tag builds every archive and writes the notes from Conventional Commits |
 | `window/` | `rookey-window`, a workspace member of its own: the page in a wry webview window. `rookey ui` starts it from beside its binary and falls back to the browser. Only it links WebKitGTK/WebView2, never `rookey`. On macOS it copies itself into `~/Library/Caches/rookey/Rookey Settings.app` and runs from there, for the Dock's name and icon (`window/macos/`); the bundle id `io.github.7kill.rookey.settings` stays fixed. Built and tested apart: `cargo build --release -p rookey-window`, `cargo test --release -p rookey-window` |
 | `src/ui.rs` | The `rookey ui` HTTP server: token, routes, state for the page, input checks, setup checks |
-| `src/ui/` | The page: `app.js` (arrow.js templates), `i18n.js` (every word, per language), `app.css`, the vendored `arrow.js`, fonts and icon, baked in with `include_bytes!` |
+| `src/i18n.rs`, `locales/`, `build.rs` | rookey's words, one JSON file per language, baked in at build time; `t()` for Rust |
+| `src/ui/` | The page: `app.js` (arrow.js templates), `i18n.js` (loads `/locales.json`), `app.css`, the vendored `arrow.js`, fonts and icon, baked in with `include_bytes!` |
 
 Settings: environment variables win over `<config_dir>/rookey/config` (`KEY=value` lines). API keys live in `<data_dir>/rookey/keys`, mode 0600, never in the config dir: people sync `~/.config` with dotfile managers and publish it.
 
@@ -55,10 +56,10 @@ Settings: environment variables win over `<config_dir>/rookey/config` (`KEY=valu
 ## The page
 
 - The design is a steno pad. Tokens are in `app.css` `:root`, with a dark set under `prefers-color-scheme` and again under `[data-theme="dark"]` for the page's own switch (`ROOKEY_UI_THEME`, empty follows the system). Commissioner is used for anything spoken or read, Martian Mono for anything typed. The left column holds settings, the right column a live example sentence, split by a red rule.
-- There's a simple view anyone can set up (setup check, engine, languages, cleanup, hotkey) and an **Advanced** fold for enthusiasts. New knobs go into Advanced unless most people need them.
+- The settings are five sections that fold, in the order of a dictation: Hotkey, Engine and languages, What gets typed, While you talk, System. A shut section shows a line of what is set; which are shut is kept in `ROOKEY_UI_CLOSED`. What few people need goes in a **More** fold inside its own section, not in a section of its own. History sits under the test in the right column.
 - Copy is plain and specific: what happens, what it costs, where things are saved. Errors say what to do next.
 - The page is [arrow.js](https://arrow-js.com/llms.txt) 1.0.6, vendored as one file (`npm pack @arrow-js/core`, `bun build dist/index.mjs --minify --format esm`) because the CSP allows only `'self'`. A slot updates only when it is given a function (`${() => ui.s.x}`); a static read inside a template is drawn once. No direct DOM writes: that is also why the download bar is a native `<progress>` (the CSP blocks `style` attributes).
-- Every word the page shows is a key in `i18n.js`, English and Ukrainian (`ROOKEY_UI_LANG`, empty follows the browser). A test fails if a language misses a key. Words the server writes itself (errors, blocked reasons) stay English. Changing the language reloads the page.
+- Every word rookey shows is a key in `locales/<id>.json`: the page fetches them as `/locales.json`, Rust reads them through `i18n::t()`, and `build.rs` bakes in every file there, so a new language is one file. English and Ukrainian are kept whole (a test); another language may miss keys, which fall back to English, but may not carry a key or a `{slot}` English lacks. A sentence that counts is an object of plural forms. `ROOKEY_UI_LANG` picks the language, else the system's (`LANG`), else English. Changing it reloads the page.
 - Page preferences go in the config, not `localStorage`: every `rookey ui` run gets a new port, so a new origin with empty storage.
 - Check changes in a real browser at 1440x900 and 390x844, in light and in dark, in both languages.
 

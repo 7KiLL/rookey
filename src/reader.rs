@@ -40,7 +40,7 @@ pub fn from_command(cmd: &str) -> Res<Context> {
     let out = shell(cmd).output()?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("the context command failed ({}): {}", out.status, err.trim()).into());
+        return Err(crate::t!("reader.command-failed", status = out.status, why = err.trim()).into());
     }
     Ok(Context { text: String::from_utf8_lossy(&out.stdout).into_owned(), listed: false })
 }
@@ -52,7 +52,7 @@ pub fn from_screen() -> Res<Context> {
         "ocr" => Ok(Context { text: ocr(&screenshot("ppm")?)?, listed: false }),
         "openai" => Ok(Context { text: openai(&screenshot("jpeg")?)?, listed: true }),
         "anthropic" => Ok(Context { text: anthropic(&screenshot("jpeg")?)?, listed: true }),
-        other => Err(format!("unknown ROOKEY_READER {other:?} ({})", READERS.join(", ")).into()),
+        other => Err(crate::t!("reader.unknown", name = format!("{other:?}"), readers = READERS.join(", ")).into()),
     }
 }
 
@@ -71,12 +71,12 @@ fn screenshot(format: &str) -> Res<Vec<u8>> {
                 grim.args(["-o", &output]);
             }
             // ponytail: grim here and screencapture on macOS; Windows and X11 set ROOKEY_SCREENSHOT to a command of their own
-            grim.arg("-").output().map_err(|e| format!("grim: {e} (set ROOKEY_SCREENSHOT to a command that prints a screenshot)"))?
+            grim.arg("-").output().map_err(|e| crate::t!("reader.no-grim", why = e))?
         }
     };
     if !out.status.success() || out.stdout.is_empty() {
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("no screenshot ({}): {}", out.status, err.trim()).into());
+        return Err(crate::t!("reader.no-shot", status = out.status, why = err.trim()).into());
     }
     vlog!(2, "context: screenshot, {} KB", out.stdout.len() / 1024);
     Ok(out.stdout)
@@ -89,13 +89,9 @@ fn screencapture(format: &str) -> Res<Vec<u8>> {
         if crate::mac::is_app() {
             // puts Rookey in the list, where its switch is; the first time, it asks as well
             crate::mac::ask_screen();
-            return Err("macOS doesn't let Rookey record the screen: allow it under Privacy & Security > \
-                        Screen & System Audio Recording, then set the hotkey again on the page, which starts Rookey again"
-                .into());
+            return Err(crate::t!("reader.mac-rookey").into());
         }
-        return Err("macOS doesn't let rookey record the screen: allow the app that started it under \
-                    Privacy & Security > Screen & System Audio Recording, then quit and reopen that app"
-            .into());
+        return Err(crate::t!("reader.mac-app").into());
     }
     // tesseract reads png as well as ppm, which screencapture doesn't write
     let kind = if format == "jpeg" { "jpg" } else { "png" };
@@ -109,7 +105,7 @@ fn screencapture(format: &str) -> Res<Vec<u8>> {
             vlog!(2, "context: screenshot, {} KB", image.len() / 1024);
             Ok(image)
         }
-        _ => Err(format!("no screenshot ({}): {}", out.status, String::from_utf8_lossy(&out.stderr).trim()).into()),
+        _ => Err(crate::t!("reader.no-shot", status = out.status, why = String::from_utf8_lossy(&out.stderr).trim()).into()),
     }
 }
 
@@ -197,7 +193,7 @@ fn ocr(image: &[u8]) -> Res<String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("tesseract: {e}"))?;
+        .map_err(|e| crate::t!("reader.no-tesseract", why = e))?;
     // written from its own thread: tesseract may start printing before it has read it all
     let mut stdin = tesseract.stdin.take().unwrap();
     let image = image.to_vec();
@@ -205,13 +201,13 @@ fn ocr(image: &[u8]) -> Res<String> {
     let out = tesseract.wait_with_output()?;
     let _ = feed.join();
     if !out.status.success() {
-        return Err(format!("tesseract failed ({})", out.status).into());
+        return Err(crate::t!("reader.tesseract-failed", status = out.status).into());
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 fn key(name: &str, provider: &str) -> Res<String> {
-    Ok(setting(name).ok_or_else(|| format!("reading the screen with {provider} needs {name}"))?)
+    Ok(setting(name).ok_or_else(|| crate::t!("reader.needs", provider = provider, name = name))?)
 }
 
 fn post(url: &str, headers: &[(&str, &str)], body: &Value) -> Res<Value> {
@@ -228,7 +224,7 @@ fn post(url: &str, headers: &[(&str, &str)], body: &Value) -> Res<Value> {
     let text = res.body_mut().read_to_string()?;
     vlog!(2, "http: {} from {url} in {} ms", res.status(), t.elapsed().as_millis());
     if !res.status().is_success() {
-        return Err(format!("{url} {}: {text}", res.status()).into());
+        return Err(crate::t!("reader.http", url = url, status = res.status(), why = text).into());
     }
     Ok(serde_json::from_str(&text)?)
 }
@@ -291,7 +287,7 @@ fn anthropic(jpeg: &[u8]) -> Res<String> {
     }
     let res = post("https://api.anthropic.com/v1/messages", &headers, &body)?;
     if res["stop_reason"] == "refusal" {
-        return Err(format!("Claude declined this screenshot ({})", res["stop_details"]).into());
+        return Err(crate::t!("reader.refused", why = res["stop_details"]).into());
     }
     Ok(anthropic_text(&res))
 }

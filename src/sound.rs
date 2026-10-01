@@ -91,7 +91,7 @@ fn play_file(file: &str) {
 }
 
 fn play_samples(samples: impl FnOnce(u32) -> Vec<f32>) -> crate::Res<()> {
-    let device = cpal::default_host().default_output_device().ok_or("no output device")?;
+    let device = cpal::default_host().default_output_device().ok_or_else(|| crate::t!("sound.no-output"))?;
     let config = device.default_output_config()?;
     let (rate, format) = (config.sample_rate(), config.sample_format());
     let samples = samples(rate);
@@ -100,7 +100,7 @@ fn play_samples(samples: impl FnOnce(u32) -> Vec<f32>) -> crate::Res<()> {
         cpal::SampleFormat::F32 => out::<f32>(&device, config.into(), samples),
         cpal::SampleFormat::I16 => out::<i16>(&device, config.into(), samples),
         cpal::SampleFormat::I32 => out::<i32>(&device, config.into(), samples),
-        f => return Err(format!("unsupported output format {f:?}").into()),
+        f => return Err(crate::t!("sound.format", format = format!("{f:?}")).into()),
     }?;
     stream.play()?;
     // the device buffers a little behind what we hand it

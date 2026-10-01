@@ -27,7 +27,7 @@ pub fn save(text: &str) {
     let setting = env::var("ROOKEY_HISTORY").ok().or_else(|| crate::CONFIG.read().unwrap().get("ROOKEY_HISTORY").cloned());
     let Some(path) = path() else { return };
     if let Err(e) = add(&path, text, setting.as_deref(), KEEP, crate::status::now_ms()) {
-        eprintln!("rookey: history {}: {e}", path.display());
+        eprintln!("{}", crate::t!("history.failed", path = path.display(), why = e));
     }
 }
 
@@ -62,10 +62,10 @@ pub fn clear(path: &Path) -> io::Result<()> {
 
 /// `rookey history` prints what is kept, newest last; `--clear` deletes it.
 pub fn run(clear_all: bool) -> crate::Res<()> {
-    let path = path().ok_or("this system has no data directory")?;
+    let path = path().ok_or_else(|| crate::t!("history.no-data-dir"))?;
     if clear_all {
         clear(&path)?;
-        eprintln!("rookey: history cleared ({})", path.display());
+        eprintln!("{}", crate::t!("history.cleared", path = path.display()));
         return Ok(());
     }
     let mut out = io::stdout().lock(); // println! panics on a closed pipe

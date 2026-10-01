@@ -223,6 +223,8 @@ pre,
   position: sticky;
   top: var(--titlebar, 0);
   max-width: var(--column);
+  max-height: calc(100vh - var(--titlebar, 0px));
+  overflow-y: auto;
   padding: 4rem 0 3rem;
 }
 
@@ -666,22 +668,17 @@ input[type="checkbox"] {
   overflow-wrap: anywhere;
 }
 
-.ready {
-  border-top: 1px solid var(--rule);
-  padding: 1rem 0;
-  color: var(--ink-soft);
-  font-size: 0.875rem;
-}
-
 .ready::before {
   content: "✓ ";
   color: var(--ok);
   font-weight: 800;
 }
 
-/* ---- advanced: folded until wanted ------------------------------------- */
+/* ---- sections that fold, and the More inside them ------------------------ */
 
-.advanced summary {
+.fold > summary,
+.more > summary,
+.recent > summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   column-gap: 1rem;
@@ -690,12 +687,18 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
-.advanced summary::-webkit-details-marker {
+.fold > summary::-webkit-details-marker,
+.more > summary::-webkit-details-marker,
+.recent > summary::-webkit-details-marker {
   display: none;
 }
 
-.advanced summary::after {
+.fold > summary::after,
+.more > summary::after,
+.recent > summary::after {
   content: "";
+  grid-column: 2;
+  grid-row: 1 / span 2;
   width: 0.625rem;
   height: 0.625rem;
   margin-right: 0.25rem;
@@ -705,29 +708,71 @@ input[type="checkbox"] {
   transition: transform 140ms ease-out;
 }
 
-.advanced[open] summary::after {
+.fold[open] > summary::after,
+.more[open] > summary::after,
+.recent[open] > summary::after {
   transform: translateY(25%) rotate(-135deg);
 }
 
-.summary-text {
-  display: grid;
+/* what is set, read while the section is shut */
+.summary-value {
+  grid-column: 1;
+  margin-top: 0.25rem;
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+  line-height: 1.45;
 }
 
-.summary-title {
-  --flare: 100;
-  font-size: 1.3125rem;
-  font-weight: 650;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
+.fold[open] > summary .summary-value,
+.recent[open] > summary .summary-value {
+  display: none;
 }
 
-.advanced > .sub {
-  padding-top: 1.5rem;
+.fold[open] > summary {
+  margin-bottom: 1.25rem;
+}
+
+.fold:not([open]) {
+  padding-bottom: 1.75rem;
+}
+
+.more {
+  margin: 1.25rem 0;
   border-top: 1px dashed var(--rule);
+  border-bottom: 1px dashed var(--rule);
+  padding: 1rem 0;
 }
 
-.advanced > .sub > h3 + * {
-  margin-top: 0.75rem;
+.more > summary {
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+}
+
+.more > summary::after {
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-width: 0 1.5px 1.5px 0;
+  border-color: var(--ink-soft);
+}
+
+.more[open] > summary {
+  margin-bottom: 1rem;
+}
+
+/* of a few ways to do one thing, only the picked one says more about itself */
+.one-about .choice:not(:has(input:checked)) .choice-about {
+  display: none;
+}
+
+/* the transcripts, under the test in the right column */
+.recent {
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--rule);
+  padding-top: 1.25rem;
+}
+
+.recent[open] > summary {
+  margin-bottom: 0.75rem;
 }
 
 /* ---- chips: one of many, no explanation needed ------------------------ */
@@ -1437,6 +1482,7 @@ textarea:focus-visible {
 
   .specimen-inner {
     position: static;
+    max-height: none;
     padding: 2.5rem 0 2rem;
     margin: 0 auto;
   }
@@ -1472,4 +1518,13 @@ textarea:focus-visible {
     transition: none !important;
     animation: none !important;
   }
+}
+
+/* the Windows key's logo, in front of "Win" wherever a chord is shown */
+.win-logo {
+  width: 0.85em;
+  height: 0.85em;
+  margin-right: 0.35em;
+  vertical-align: -0.05em;
+  fill: currentColor;
 }

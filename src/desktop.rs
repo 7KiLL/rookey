@@ -8,7 +8,7 @@ use std::{env, fs};
 
 use serde_json::{Value, json};
 
-use crate::Res;
+use crate::{Res, t};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Desktop {
@@ -85,10 +85,10 @@ impl Chord {
                 Some(_) => {}
                 // this goes into a config file, so nothing but a plain key name gets through
                 None if key.is_none() && is_key => key = Some(part.to_string()),
-                None => return Err(format!("{text:?} is not a key combination.").into()),
+                None => return Err(t!("desktop.not-chord", text = format!("{text:?}")).into()),
             }
         }
-        let key = key.ok_or_else(|| format!("{text:?} has no key in it, only modifiers."))?;
+        let key = key.ok_or_else(|| t!("desktop.only-mods", text = format!("{text:?}")))?;
         mods.sort_by_key(|name| MODS.iter().position(|m| m == name));
         Ok(Chord { mods, key })
     }
@@ -112,7 +112,7 @@ impl Chord {
             || self.key.starts_with("KP_")
             || TYPING.iter().any(|k| k.eq_ignore_ascii_case(&self.key));
         if bare && types {
-            return Err(format!("{self} alone would take that key away from typing. Add Super, Ctrl or Alt.").into());
+            return Err(t!("desktop.types", chord = self).into());
         }
         Ok(())
     }
@@ -161,15 +161,10 @@ impl Config {
                 // can mark one optional, and nothing older gets an include from here.
                 let version = niri_version();
                 let blocked = match version {
-                    _ if !main.is_file() => Some(format!(
-                        "niri runs on its defaults here, there is no {} to put the hotkey in. Create it, then come back.",
-                        tilde(&main)
-                    )),
+                    _ if !main.is_file() => Some(t!("desktop.niri-defaults", path = tilde(&main))),
                     Some(v) if v >= (26, 4) => None,
-                    Some((major, minor)) => Some(format!(
-                        "niri {major}.{minor:02} can't be given the hotkey safely, that takes 26.04. Add the line below to your binds by hand."
-                    )),
-                    None => Some("niri didn't say which version it is.".into()),
+                    Some((major, minor)) => Some(t!("desktop.niri-old", version = format!("{major}.{minor:02}"))),
+                    None => Some(t!("desktop.niri-no-version")),
                 };
                 Some(Config { desktop: Desktop::Niri, main, files, blocked })
             }
@@ -273,13 +268,13 @@ impl Config {
             .args(args)
             .arg(file)
             .output()
-            .map_err(|e| format!("Can't check the config, {program} didn't run: {e}"))?;
+            .map_err(|e| t!("desktop.no-check", program = program, why = e))?;
         if out.status.success() {
             return Ok(());
         }
         let said = [out.stdout, out.stderr].concat();
         let said = strip_colors(&String::from_utf8_lossy(&said));
-        Err(format!("{program} won't take it: {}", reason(&said)).into())
+        Err(t!("desktop.refused", program = program, why = reason(&said)).into())
     }
 }
 
@@ -366,7 +361,7 @@ fn program() -> Res<String> {
     };
     let plain = path.chars().all(|c| c.is_ascii_alphanumeric() || "_-./~".contains(c));
     if !plain {
-        return Err(format!("rookey is at {path}, a path a config can't hold as it is. Bind it by hand.").into());
+        return Err(t!("desktop.odd-path", path = path).into());
     }
     Ok(path)
 }
@@ -399,7 +394,7 @@ pub fn hotkey() -> Value {
 /// the keys `rookey listen` hears from reaching the windows. With the keys taken by something
 /// else it says by what and leaves everything alone, unless `replace`.
 pub fn bind(chord: &str, file: Option<&str>, replace: bool, swallow: bool) -> Res<Value> {
-    let config = Config::find().ok_or("This desktop's hotkeys are out of rookey's reach.")?;
+    let config = Config::find().ok_or_else(|| t!("desktop.out-of-reach"))?;
     if let Some(why) = &config.blocked {
         return Err(why.clone().into());
     }
@@ -411,7 +406,7 @@ pub fn bind(chord: &str, file: Option<&str>, replace: bool, swallow: bool) -> Re
             .files
             .iter()
             .find(|f| tilde(f) == asked || f.display().to_string() == asked)
-            .ok_or_else(|| format!("{asked} is not part of the {} config.", config.desktop.id()))?
+            .ok_or_else(|| t!("desktop.not-part", file = asked, desktop = config.desktop.id()))?
             .clone(),
         None => config.default_file().to_path_buf(),
     };
@@ -452,7 +447,7 @@ pub fn writable() -> bool {
 }
 
 pub fn unbind() -> Res<()> {
-    let config = Config::find().ok_or("This desktop's hotkeys are out of rookey's reach.")?;
+    let config = Config::find().ok_or_else(|| t!("desktop.out-of-reach"))?;
     let before = Saved::of(&config)?;
     let removed = (|| -> Res<()> {
         for file in &config.files {
@@ -492,7 +487,7 @@ impl Saved {
             let text = match fs::read_to_string(&file) {
                 Ok(text) => Some(text),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(e) => return Err(format!("Can't read {}: {e}", tilde(&file)).into()),
+                Err(e) => return Err(t!("server.cant-read", path = tilde(&file), why = e).into()),
             };
             saved.push((file, text));
         }
@@ -510,7 +505,7 @@ impl Saved {
                 None => fs::remove_file(file),
             };
             if let Err(e) = put_back {
-                eprintln!("rookey: couldn't put {} back as it was: {e}", file.display());
+                eprintln!("{}", t!("desktop.put-back", file = file.display(), why = e));
             }
         }
     }

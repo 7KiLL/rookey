@@ -26,7 +26,7 @@ pub fn type_text(text: &str) -> Res<()> {
     let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), size_of::<INPUT>() as i32) };
     if sent as usize != inputs.len() {
         // a window running as administrator takes no input from one that isn't
-        return Err("Windows took only part of the text; is the window running as administrator?".into());
+        return Err(crate::t!("cli.windows-partial").into());
     }
     Ok(())
 }

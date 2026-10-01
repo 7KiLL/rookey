@@ -109,7 +109,7 @@ pub fn run() -> crate::Res<()> {
         // move to another screen mid-sentence
         let screen: Id = send!(class(c"NSScreen"), "mainScreen"; Id);
         if screen.is_null() {
-            return Err("no screen to show the pill on".into());
+            return Err(crate::t!("overlay.no-screen").into());
         }
         let scale = (send!(screen, "backingScaleFactor"; f64)).round().max(1.0) as u32;
         let rect = place(visible_frame(screen), crate::overlay::at());
@@ -120,7 +120,7 @@ pub fn run() -> crate::Res<()> {
         let window: Id = send!(window, "initWithContentRect:styleMask:backing:defer:",
             rect => Rect, BORDERLESS => usize, BUFFERED => usize, false => bool; Id);
         if window.is_null() {
-            return Err("couldn't make the pill's window".into());
+            return Err(crate::t!("overlay.no-window").into());
         }
         send!(window, "setReleasedWhenClosed:", false => bool; ());
         send!(window, "setOpaque:", false => bool; ());

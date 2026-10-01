@@ -50,7 +50,7 @@ const ui = reactive({
   theme: "system", // both come from the config once the state is here
   stopped: false,
   status: { key: "status.loading", vars: {}, problem: false },
-  advanced: false, // from the config too: every `rookey ui` is a new origin, with nothing kept
+  open: null, // a shut section opened for a moment, to show what a check asks for
   otherLanguage: false,
   desktop: null,
   edit: null, // the rewriting instruction while it is typed, before it is saved
@@ -279,12 +279,42 @@ function Version() {
     if (phase === "failed") return html`<span class="problem-text">${t("update.failed", { why: error })}</span> · ${button("update.again", "check")}`;
     return button("update.check", "check");
   };
-  return html`<p class="version" aria-live="polite"><span>${() => t("update.version", { version: ui.s.update.version })}</span> · ${line}</p>`;
+  const ready = () => (ui.s.checks.every((c) => c.ok) ? html`<span class="ready">${t("setup.ready")}</span> · ` : "");
+  return html`<p class="version" aria-live="polite">${ready}<span>${() => t("update.version", { version: ui.s.update.version })}</span> · ${line}</p>`;
 }
 
 function Settings() {
-  return html`${Checks()}${Engine()}${Languages()}${Cleanup()}${Words()}${Hotkey()}${History()}${Advanced()}`;
+  return html`${Checks()}${Hotkey()}${Engine()}${Typed()}${Talk()}${System()}`;
 }
+
+const closed = () => (values().ROOKEY_UI_CLOSED || "").split(",").filter(Boolean);
+
+/** A section that folds: its title, a line saying what is set while it's shut, then the settings.
+ * Which are shut is kept in the config: every `rookey ui` is a new origin, with nothing kept. */
+function Section(id, title, summary, body) {
+  const toggled = (e) => {
+    const now = closed().filter((s) => s !== id);
+    if (!e.target.open) now.push(id);
+    if (ui.open === id && !e.target.open) ui.open = null;
+    if (now.join(",") !== closed().join(",")) save({ ROOKEY_UI_CLOSED: now.join(",") });
+  };
+  return html`
+    <details class="group fold" id="${id}" open="${() => !closed().includes(id) || ui.open === id}" @toggle="${toggled}">
+      <summary>
+        <h2 id="${`${id}-title`}">${title}</h2>
+        <span class="summary-value">${summary}</span>
+      </summary>
+      ${body}
+    </details>`;
+}
+
+/** What most people never need, folded inside the section it belongs to. */
+function More(label, body) {
+  return html`<details class="more"><summary>${label}</summary>${body}</details>`;
+}
+
+/** Parts of a summary line, the empty ones left out. */
+const parts = (...items) => items.filter(Boolean).join(" · ");
 
 /** A setting the shell overrides, noted next to it. */
 function shell(name) {
@@ -382,6 +412,7 @@ function checkFix(c) {
   if (c.open) return button(`open.${c.open}`, () => openPane(c.open));
   if (c.id === "key") {
     return button("key.add", () => {
+      ui.open = "engine";
       ui.provider = { id: "elevenlabs", where: "engine", doing: "edit" };
       focus("#key-elevenlabs-engine");
     });
@@ -423,7 +454,6 @@ function Checks() {
   return html`
     <section class="group" id="setup" aria-labelledby="setup-title" hidden="${() => !failing()}">
       <h2 id="setup-title">${t("setup.title")}</h2>
-      <p class="about">${t("setup.about")}</p>
       <ul class="checks">
         ${() => ui.s.checks.map((c) => {
           const words = checkWords(c);
@@ -441,8 +471,7 @@ function Checks() {
       <div class="actions">
         <button type="button" class="button" @click="${checkAgain}">${t("setup.again")}</button>
       </div>
-    </section>
-    <p class="ready" hidden="${failing}">${t("setup.ready")}</p>`;
+    </section>`;
 }
 
 /** Back from System Settings or a terminal: checks again while something is missing. */
@@ -478,16 +507,20 @@ function Engine() {
   };
   const using = () => ui.s.models.installed.find((m) => m.path === ui.s.models.in_use);
   const offer = () => !cloud() && !ui.s.models.found && !ui.s.models.catalog[0].installed;
-  return html`
-    <section class="group" aria-labelledby="engine-title">
-      <h2 id="engine-title">${t("engine.title")}</h2>
-      <p class="about">${t("engine.about")}</p>
-      <div class="choices" role="radiogroup" aria-labelledby="engine-title">
+  const key = () => provider("elevenlabs");
+  const summary = () => parts(
+    cloud() ? "ElevenLabs" : t("engine.local"),
+    cloud() ? engine() === "elevenlabs-realtime" && t("sum.streaming") : using() && (using().name || using().file),
+    languages().length ? languages().map((l) => l.toUpperCase()).join(", ") : t("sum.any"),
+  );
+  return Section("engine", t("section.engine"), summary, html`
+      <div class="choices one-about" role="radiogroup" aria-labelledby="engine-title">
         ${choice("engine", "local", () => !cloud(), t("engine.local"), t("engine.local.about"), pickEngine)}
         ${choice("engine", "cloud", cloud, t("engine.cloud"), t("engine.cloud.about"), pickEngine)}
       </div>
       ${shell("ROOKEY_BACKEND")}
-      <ul class="rows" hidden="${() => !cloud()}">${() => (cloud() ? ProviderRow(provider("elevenlabs"), "engine") : "")}</ul>
+      <p class="hint" hidden="${() => !cloud() || !key().saved}">${() => t("engine.key.saved", { name: key().name })}</p>
+      <ul class="rows" hidden="${() => !cloud() || key().saved}">${() => (cloud() && !key().saved ? ProviderRow(key(), "engine") : "")}</ul>
       <div hidden="${() => !cloud()}">
         ${toggle("stream", t("engine.stream"), t("engine.stream.about"), () => engine() === "elevenlabs-realtime", (e) =>
           save({ ROOKEY_BACKEND: e.target.checked ? "elevenlabs-realtime" : "elevenlabs" }))}
@@ -495,7 +528,8 @@ function Engine() {
       <p class="hint" hidden="${() => cloud() || !ui.s.models.found || !using()}">${() =>
         using() ? t("engine.uses", { name: using().name || using().file, size: size(using().mb) }) : ""}</p>
       <ul class="rows" hidden="${() => !offer()}">${() => (offer() ? ModelRow(ui.s.models.catalog[0]) : "")}</ul>
-    </section>`;
+      <div hidden="${cloud}">${More(t("more.models"), Models())}</div>
+      ${Languages()}`);
 }
 
 function Models() {
@@ -503,10 +537,8 @@ function Models() {
   const listed = () => models().installed.some((m) => m.path === models().in_use);
   const wanted = () => models().catalog.filter((m) => !m.installed);
   return html`
-    <div class="sub" id="models">
-      <h3 id="models-title">${t("models.title")}</h3>
-      <p class="about">${t("models.about")}</p>
-      <div class="choices" role="radiogroup" aria-labelledby="models-title">
+    <div id="models">
+      <div class="choices" role="radiogroup" aria-label="${t("models.title")}">
         ${() => models().installed.map((m) =>
           choice("model", m.path, m.path === models().in_use, m.name || m.file,
             t("models.in", { size: size(m.mb), where: m.shown.replace(/[\\/][^\\/]*$/, "") }),
@@ -585,9 +617,8 @@ function Languages() {
     return t("lang.many", { names: listOf(names) }) + (cloud() ? t("lang.cloud") : "");
   };
   return html`
-    <section class="group" aria-labelledby="language-title">
-      <h2 id="language-title">${t("lang.title")}</h2>
-      <p class="about">${t("lang.about")}</p>
+    <div class="sub">
+      <h3 id="language-title">${t("lang.title")}</h3>
       <div class="chips" role="group" aria-labelledby="language-title">
         ${() => {
           const picked = languages();
@@ -606,82 +637,18 @@ function Languages() {
       </div>
       <p class="hint">${about}</p>
       ${shell("ROOKEY_LANG")}
-    </section>`;
+    </div>`;
 }
 
-// ---- cleanup and screen terms --------------------------------------------
+// ---- what gets typed --------------------------------------------------------
 
-function Cleanup() {
+function Typed() {
   const sanitize = () =>
     cloud()
       ? tx("sanitize.cloud", { um: code("um"), uh: code("uh"), yk: code("you know") })
       : tx("sanitize.local", { music: code("[music]") });
   const terms = () =>
     termsMode() === "command" ? t("terms.command") : t("terms.screen") + (reader() === "ocr" ? t("terms.local") : "");
-  return html`
-    <section class="group" aria-labelledby="cleanup-title">
-      <h2 id="cleanup-title">${t("cleanup.title")}</h2>
-      ${toggle("sanitize", t("sanitize"), sanitize, () => isOn(values().ROOKEY_SANITIZE), (e) =>
-        save({ ROOKEY_SANITIZE: e.target.checked ? "1" : "" }))}
-      ${shell("ROOKEY_SANITIZE")}
-      ${toggle("terms", t("terms"), terms, () => termsMode() !== "off", (e) => save({ ROOKEY_CONTEXT: e.target.checked ? "1" : "" }))}
-      ${shell("ROOKEY_CONTEXT")}
-      ${ScreenLangs()}
-    </section>`;
-}
-
-// ---- your words -------------------------------------------------------------
-
-const words = () => (values().ROOKEY_WORDS || "").split(",").filter(Boolean);
-
-function Words() {
-  const draft = reactive({ text: "" });
-  const add = async (e) => {
-    e.preventDefault();
-    const typed = draft.text.split(",").map((w) => w.trim()).filter((w) => w && !words().includes(w));
-    if (typed.length === 0) return focus("#word");
-    if (await save({ ROOKEY_WORDS: [...words(), ...typed].join(",") })) draft.text = "";
-    focus("#word");
-  };
-  const remove = (word) => () => save({ ROOKEY_WORDS: words().filter((w) => w !== word).join(",") });
-  return html`
-    <section class="group" aria-labelledby="words-title">
-      <h2 id="words-title">${t("words.title")}</h2>
-      <p class="about">${t("words.about")}</p>
-      <ul class="words" aria-labelledby="words-title" hidden="${() => words().length === 0}">
-        ${() => words().map((w) => html`<li><button type="button" class="word" aria-label="${t("words.remove", { word: w })}" @click="${remove(w)}"><span>${w}</span><span class="word-x" aria-hidden="true">×</span></button></li>`)}
-      </ul>
-      <form class="field" @submit="${add}">
-        <label for="word">${t("words.add")}</label>
-        <div class="with-button">
-          <input class="typed-input" id="word" type="text" spellcheck="false" autocomplete="off" maxlength="200" placeholder="${t("words.placeholder")}"
-            .value="${() => draft.text}" @input="${(e) => (draft.text = e.target.value)}">
-          <button type="submit" class="button">${t("words.add.button")}</button>
-        </div>
-        <p class="hint">${t("words.hint")}</p>
-      </form>
-      <p class="hint">${() => (cloud() ? t("words.cloud") : t("words.local"))}</p>
-      ${shell("ROOKEY_WORDS")}
-    </section>`;
-}
-
-/** "OpenAI needs a key" with the way to the place where keys go. */
-function needsKey(id) {
-  const open = () => {
-    ui.advanced = true;
-    ui.provider = { id, where: "keys", doing: "edit" };
-    focus(`#key-${id}-keys`);
-  };
-  const link = html`<a href="#providers" @click="${open}">${t("reader.add-key")}</a>`;
-  return html`<p class="problem">${tx("reader.needs-key", { name: provider(id).name, link })}</p>`;
-}
-
-function Advanced() {
-  const toggled = (e) => {
-    ui.advanced = e.target.open;
-    // the page opening it as it draws is not a change to save
-    if (ui.advanced !== isOn(values().ROOKEY_UI_ADVANCED)) save({ ROOKEY_UI_ADVANCED: ui.advanced ? "1" : "" });
-  };
   const editText = () => ui.edit ?? values().ROOKEY_EDIT;
   // your own text is kept in ROOKEY_EDIT_CUSTOM while a preset or Off is on, and comes back with Custom
   const pickEdit = (id) => async () => {
@@ -693,35 +660,20 @@ function Advanced() {
     if (id === "custom") return (await save({ ROOKEY_EDIT: values().ROOKEY_EDIT_CUSTOM })) && focus("#edit");
     save({ ROOKEY_EDIT: EDITS[id] ?? "", ...keep });
   };
-  return html`
-    <details class="group advanced" id="advanced" open="${() => ui.advanced}" @toggle="${toggled}">
-      <summary>
-        <span class="summary-text">
-          <span class="summary-title">${t("advanced")}</span>
-          <span class="about">${t("advanced.about")}</span>
-        </span>
-      </summary>
-
-      ${Models()}
-
-      <div class="${() => (cloud() ? "sub" : "sub is-off")}" id="edit-field">
-        <h3 id="edit-title">${t("edit.title")}</h3>
-        <div class="chips" role="radiogroup" aria-labelledby="edit-title">
-          ${["off", ...Object.keys(EDITS), "custom"].map((id) =>
-            chip("radio", "edit-mode", id, () => editMode() === id, t(`edit.${id}`), pickEdit(id), () => !cloud()))}
-        </div>
-        <p class="hint">${() => t(`edit.${editMode()}.about`)}</p>
-        <div class="field" hidden="${() => editMode() !== "custom"}">
-          <label class="visually-hidden" for="edit">${t("edit.custom.label")}</label>
-          <textarea id="edit" rows="3" maxlength="2000" placeholder="${t("edit.placeholder")}" disabled="${() => !cloud()}"
-            .value="${editText}" @input="${(e) => (ui.edit = e.target.value)}"
-            @change="${async (e) => (ui.editCustom = true) && (await save({ ROOKEY_EDIT: e.target.value, ROOKEY_EDIT_CUSTOM: e.target.value })) && (ui.edit = null)}"></textarea>
-        </div>
-        <p class="hint" hidden="${() => cloud() && editMode() === "off"}">${() => t(cloud() ? "edit.cloud" : "edit.local")}</p>
-        ${shell("ROOKEY_EDIT")}
-      </div>
-
-      <div class="sub" id="reader-field">
+  const summary = () => parts(
+    isOn(values().ROOKEY_SANITIZE) && t("sum.fillers"),
+    termsMode() !== "off" && t("sum.terms"),
+    words().length && t("sum.words", { n: words().length }),
+    cloud() && editMode() !== "off" && t("sum.rewrite", { name: t(`edit.${editMode()}`) }),
+  ) || t("sum.as-said");
+  return Section("typed", t("section.typed"), summary, html`
+      ${toggle("sanitize", t("sanitize"), sanitize, () => isOn(values().ROOKEY_SANITIZE), (e) =>
+        save({ ROOKEY_SANITIZE: e.target.checked ? "1" : "" }))}
+      ${shell("ROOKEY_SANITIZE")}
+      ${toggle("terms", t("terms"), terms, () => termsMode() !== "off", (e) => save({ ROOKEY_CONTEXT: e.target.checked ? "1" : "" }))}
+      ${shell("ROOKEY_CONTEXT")}
+      ${ScreenLangs()}
+      <div id="reader-field">${More(t("more.reader"), html`
         <h3 id="reader-title">${t("reader.title")}</h3>
         <div class="chips" role="radiogroup" aria-labelledby="reader-title">
           ${Object.entries(READERS).map(([id, r]) =>
@@ -742,15 +694,87 @@ function Advanced() {
           <p class="hint">${t("command.hint")}</p>
         </div>
         <p class="hint" hidden="${() => !cloud() || termsMode() === "off"}">${t("terms.cost")}</p>
+      `)}</div>
+
+      ${Words()}
+
+      <div class="${() => (cloud() ? "sub" : "sub is-off")}" id="edit-field">
+        <h3 id="edit-title">${t("edit.title")}</h3>
+        <div class="chips" role="radiogroup" aria-labelledby="edit-title">
+          ${["off", ...Object.keys(EDITS), "custom"].map((id) =>
+            chip("radio", "edit-mode", id, () => editMode() === id, t(`edit.${id}`), pickEdit(id), () => !cloud()))}
+        </div>
+        <p class="hint">${() => t(`edit.${editMode()}.about`)}</p>
+        <div class="field" hidden="${() => editMode() !== "custom"}">
+          <label class="visually-hidden" for="edit">${t("edit.custom.label")}</label>
+          <textarea id="edit" rows="3" maxlength="2000" placeholder="${t("edit.placeholder")}" disabled="${() => !cloud()}"
+            .value="${editText}" @input="${(e) => (ui.edit = e.target.value)}"
+            @change="${async (e) => (ui.editCustom = true) && (await save({ ROOKEY_EDIT: e.target.value, ROOKEY_EDIT_CUSTOM: e.target.value })) && (ui.edit = null)}"></textarea>
+        </div>
+        <p class="hint" hidden="${() => cloud() && editMode() === "off"}">${() => t(cloud() ? "edit.cloud" : "edit.local")}</p>
+        ${shell("ROOKEY_EDIT")}
       </div>
 
-      ${Sounds()}
+`);
+}
 
-      ${() => (ui.s.os === "macos" ? Clipboard() : "")}
+// ---- your words -------------------------------------------------------------
 
+const words = () => (values().ROOKEY_WORDS || "").split(",").filter(Boolean);
+
+function Words() {
+  const draft = reactive({ text: "" });
+  const add = async (e) => {
+    e.preventDefault();
+    const typed = draft.text.split(",").map((w) => w.trim()).filter((w) => w && !words().includes(w));
+    if (typed.length === 0) return focus("#word");
+    if (await save({ ROOKEY_WORDS: [...words(), ...typed].join(",") })) draft.text = "";
+    focus("#word");
+  };
+  const remove = (word) => () => save({ ROOKEY_WORDS: words().filter((w) => w !== word).join(",") });
+  return html`
+    <div class="sub">
+      <h3 id="words-title">${t("words.title")}</h3>
+      <ul class="words" aria-labelledby="words-title" hidden="${() => words().length === 0}">
+        ${() => words().map((w) => html`<li><button type="button" class="word" aria-label="${t("words.remove", { word: w })}" @click="${remove(w)}"><span>${w}</span><span class="word-x" aria-hidden="true">×</span></button></li>`)}
+      </ul>
+      <form class="field" @submit="${add}">
+        <label for="word">${t("words.add")}</label>
+        <div class="with-button">
+          <input class="typed-input" id="word" type="text" spellcheck="false" autocomplete="off" maxlength="200" placeholder="${t("words.placeholder")}"
+            .value="${() => draft.text}" @input="${(e) => (draft.text = e.target.value)}">
+          <button type="submit" class="button">${t("words.add.button")}</button>
+        </div>
+        <p class="hint">${t("words.hint")}</p>
+      </form>
+      <p class="hint">${() => (cloud() ? t("words.cloud") : t("words.local"))}</p>
+      ${shell("ROOKEY_WORDS")}
+    </div>`;
+}
+
+/** "OpenAI needs a key" with the way to the place where keys go. */
+function needsKey(id) {
+  const open = () => {
+    ui.open = "system";
+    ui.provider = { id, where: "keys", doing: "edit" };
+    focus(`#key-${id}-keys`);
+  };
+  const link = html`<a href="#providers" @click="${open}">${t("reader.add-key")}</a>`;
+  return html`<p class="problem">${tx("reader.needs-key", { name: provider(id).name, link })}</p>`;
+}
+
+// ---- system ----------------------------------------------------------------
+
+/** What applies to all of rookey: keys, updates, files, and the macOS clipboard. */
+function System() {
+  const saved = () => ui.s.providers.filter((p) => p.saved || p.env).length;
+  const summary = () => parts(
+    saved() ? t("sum.keys", { n: saved() }) : t("sum.no-keys"),
+    t(values().ROOKEY_AUTOUPDATE === "0" ? "sum.updates.check" : "sum.updates"),
+  );
+  return Section("system", t("section.system"), summary, html`
       <div class="sub" id="providers">
         <h3 id="providers-title">${t("keys.title")}</h3>
-        <p class="about">${t("keys.about")}</p>
         <ul class="rows" aria-labelledby="providers-title">${() => ui.s.providers.map((p) => ProviderRow(p, "keys"))}</ul>
       </div>
 
@@ -765,7 +789,8 @@ function Advanced() {
         <h3>${t("files.title")}</h3>
         <p class="hint">${() => tx("files", { config: code(ui.s.path), keys: code(ui.s.keys_path) })}</p>
       </div>
-    </details>`;
+      ${() => (ui.s.os === "macos" ? Clipboard() : "")}
+`);
 }
 
 /** Which sounds, a Play button for each, and a file of your own in place of any. */
@@ -918,16 +943,16 @@ function Hotkey() {
   const unbind = async () => {
     if (listening()) {
       const was = ui.s.listen.chord;
-      if (await send("/api/hotkey", { unlisten: true }, "hotkey.s.stopping")) say("hotkey.s.unlistened", { chord: was });
+      if (await send("/api/hotkey", { unlisten: true }, "hotkey.s.stopping")) say("hotkey.s.unlistened", { chord: shown(was) });
       return redraw({ way: "listen", editing: false, chord: null });
     }
     const was = ui.s.hotkey.bound;
-    if (await send("/api/hotkey", { unbind: true }, "hotkey.s.unbinding")) say("hotkey.s.unbound", was);
+    if (await send("/api/hotkey", { unbind: true }, "hotkey.s.unbinding")) say("hotkey.s.unbound", { ...was, chord: shown(was.chord) });
     redraw({ editing: false, chord: null });
   };
 
   const summary = () => {
-    const chord = code(set().chord);
+    const chord = code(keys(set().chord));
     if (!listening()) return tx("hotkey.bound", { chord, file: code(set().file) });
     if (!ui.s.listen.running) return tx("hotkey.not-running", { chord });
     // on macOS Rookey hears the keys itself, from login, and keeps all but a lone modifier
@@ -936,12 +961,14 @@ function Hotkey() {
     return [...tx("hotkey.hold", { chord }), more];
   };
 
-  return html`
-    <section class="group" aria-labelledby="hotkey-title">
-      <h2 id="hotkey-title">${t("hotkey.title")}</h2>
-      <p class="about">${t("hotkey.about")}</p>
+  const line = () => {
+    if (!set()) return t("sum.unset");
+    if (!listening()) return tx("sum.toggle", { chord: keys(set().chord) });
+    return tx(ui.s.listen.running ? "sum.hold" : "sum.not-running", { chord: keys(set().chord) });
+  };
 
-      <div class="choices" role="radiogroup" aria-labelledby="hotkey-title">
+  return Section("hotkey", t("hotkey.title"), line, html`
+      <div class="choices one-about" role="radiogroup" aria-labelledby="hotkey-title">
         ${choice("hotkey-way", "listen", listening, t("hotkey.listen"), t("hotkey.listen.about"), pickWay,
           () => Boolean(ui.s.listen.blocked) && !ui.s.listen.chord)}
         ${choice("hotkey-way", "desktop", () => !listening(), t("hotkey.desktop"),
@@ -962,15 +989,32 @@ function Hotkey() {
 
       ${() => (manual() ? ManualHotkey() : "")}
 
+    `);
+}
+
+// ---- while you talk ----------------------------------------------------------
+
+/** What rookey does while it records: the sounds, the pill on screen, the notifications. */
+function Talk() {
+  const pill = () => !isOn(values().ROOKEY_NO_OVERLAY);
+  const pillStyle = () => (PILL_STYLES.includes(values().ROOKEY_PILL) ? values().ROOKEY_PILL : PILL_STYLES[0]);
+  const summary = () => parts(
+    isOn(values().ROOKEY_QUIET) ? t("sum.quiet") : t("sum.sounds", { name: t(`sounds.${soundSet()}`) }),
+    pill() ? t("sum.pill", { name: t(`pill.${pillStyle()}`) }) : t("sum.no-pill"),
+    !isOn(values().ROOKEY_NO_NOTIFICATIONS) && t("sum.notify"),
+  );
+  return Section("talk", t("section.talk"), summary, html`
       ${toggle("sounds", t("sounds"), t("sounds.about"), () => !isOn(values().ROOKEY_QUIET), (e) =>
         save({ ROOKEY_QUIET: e.target.checked ? "" : "1" }))}
-      ${toggle("overlay", t("overlay"), tx("overlay.about", { cmd: code("rookey status --follow") }), () => !isOn(values().ROOKEY_NO_OVERLAY), (e) =>
+      <div hidden="${() => isOn(values().ROOKEY_QUIET)}">${More(t("more.sounds"), Sounds())}</div>
+      ${toggle("overlay", t("overlay"), tx("overlay.about", { cmd: code("rookey status --follow") }), pill, (e) =>
         save({ ROOKEY_NO_OVERLAY: e.target.checked ? "" : "1" }))}
-      ${() => (isOn(values().ROOKEY_NO_OVERLAY) ? "" : html`${PillStyle()}${PillPlace()}`)}
+      ${() => (pill() ? html`${PillStyle()}${More(t("more.place"), PillPlace())}` : "")}
       ${toggle("notifications", t("notifications"), t("notifications.about"), () => !isOn(values().ROOKEY_NO_NOTIFICATIONS), (e) =>
         save({ ROOKEY_NO_NOTIFICATIONS: e.target.checked ? "" : "1" }))}
-    </section>`;
+    `);
 }
+
 
 /** The pill's look: the first is the default and saved as empty. */
 function PillStyle() {
@@ -1092,17 +1136,18 @@ function HotkeyForm(listening, set) {
   const name = desktopName();
 
   const bind = async (replace) => {
-    const chord = $("#chord").value.trim();
-    if (!chord) return $("#chord").focus();
+    const typed = $("#chord").value.trim();
+    if (!typed) return $("#chord").focus();
+    const chord = stored(typed);
     const asked = listening ? { chord, listen: true, replace } : { chord, file: mine.file, replace };
-    const reply = await send("/api/hotkey", asked, listening ? "hotkey.s.listening" : "hotkey.s.binding", { chord });
-    if (!reply) return redraw({ chord, problem: t(ui.status.key, ui.status.vars) });
+    const reply = await send("/api/hotkey", asked, listening ? "hotkey.s.listening" : "hotkey.s.binding", { chord: shown(chord) });
+    if (!reply) return redraw({ chord: typed, problem: t(ui.status.key, ui.status.vars) });
     if (reply.taken) {
-      say("hotkey.s.taken", { chord: reply.taken.chord });
-      return redraw({ chord, taken: reply.taken });
+      say("hotkey.s.taken", { chord: shown(reply.taken.chord) });
+      return redraw({ chord: typed, taken: reply.taken });
     }
-    if (listening) say("hotkey.s.listens", { chord: ui.s.listen.chord });
-    else say("hotkey.s.bound", ui.s.hotkey.bound);
+    if (listening) say("hotkey.s.listens", { chord: shown(ui.s.listen.chord) });
+    else say("hotkey.s.bound", { ...ui.s.hotkey.bound, chord: shown(ui.s.hotkey.bound.chord) });
     Object.assign(mine, { way: null, editing: false, chord: null, files: false, pressing: false });
     redraw({});
   };
@@ -1118,8 +1163,8 @@ function HotkeyForm(listening, set) {
       say("hotkey.s.none");
       return redraw({ pressing: false });
     }
-    say("hotkey.s.got", { chord: reply.captured });
-    redraw({ pressing: false, chord: reply.captured });
+    say("hotkey.s.got", { chord: shown(reply.captured) });
+    redraw({ pressing: false, chord: shown(reply.captured) });
     focus("#hotkey-bind");
   };
 
@@ -1127,7 +1172,7 @@ function HotkeyForm(listening, set) {
     mine.pressing
       ? t(listening ? "hotkey.pressing.listen" : "hotkey.pressing.desktop")
       : listening
-        ? hotkey.writable ? t("hotkey.hint.listen-bound", { desktop: name }) : t("hotkey.hint.listen")
+        ? hotkey.writable ? tx("hotkey.hint.listen-bound", { desktop: name, mod: keys("Super") }) : tx("hotkey.hint.listen", { mod: keys("Super") })
         : t("hotkey.hint.desktop", { desktop: name });
 
   const where = () =>
@@ -1140,7 +1185,7 @@ function HotkeyForm(listening, set) {
   const taken = () => {
     const { chord, file, line } = mine.taken;
     const outcome = t(listening ? "hotkey.taken.listen" : hotkey.desktop === "niri" ? "hotkey.taken.niri" : "hotkey.taken.other");
-    return tx("hotkey.taken", { chord: code(chord), file: code(file), line, outcome });
+    return tx("hotkey.taken", { chord: code(keys(chord)), file: code(file), line, outcome });
   };
 
   return html`
@@ -1149,7 +1194,7 @@ function HotkeyForm(listening, set) {
         <label for="chord">${t("hotkey.keys")}</label>
         <div class="with-button">
           <input class="${() => (mine.pressing ? "typed-input is-listening" : "typed-input")}" id="chord" type="text" spellcheck="false" autocomplete="off"
-            placeholder="Super+Shift+D" .value="${() => mine.chord ?? set?.chord ?? (listening ? "Control_R" : "Super+Shift+D")}"
+            placeholder="${shown("Super+Shift+D")}" .value="${() => mine.chord ?? shown(set?.chord ?? (listening ? "Control_R" : "Super+Shift+D"))}"
             @input="${(e) => (mine.chord = e.target.value)}">
           <button type="button" class="button" @click="${press}">${() => t(mine.pressing ? "hotkey.pressing" : "hotkey.press")}</button>
         </div>
@@ -1230,9 +1275,10 @@ function History() {
     }
   };
   return html`
-    <section class="group" id="history" aria-labelledby="history-title">
-      <h2 id="history-title">${t("history.title")}</h2>
-      <p class="about">${() => tx("history.about", { keep: h.keep, path: code(h.path) })}</p>
+    <details class="recent" id="history">
+      <summary><h2 class="label" id="history-title">${t("history.title")}</h2><span class="summary-value">${() =>
+        h.entries.length ? t("sum.recent", { n: h.entries.length }) : ""}</span></summary>
+      <p class="hint">${() => tx("history.about", { keep: h.keep, path: code(h.path) })}</p>
       ${toggle("history-on", t("history.keep"), t("history.keep.about"), on, (e) => save({ ROOKEY_HISTORY: e.target.checked ? "" : "0" }))}
       ${shell("ROOKEY_HISTORY")}
       <p class="hint" hidden="${() => h.entries.length > 0}">${t("history.empty")}</p>
@@ -1247,7 +1293,7 @@ function History() {
         <button type="button" class="button is-danger" @click="${clear}">${t("history.clear.yes")}</button>
         <button type="button" class="button" id="history-keep" @click="${() => (h.clearing = false)}">${t("history.clear.no")}</button>
       </div>
-    </section>`;
+    </details>`;
 }
 
 function HistoryRow(entry) {
@@ -1296,6 +1342,7 @@ function Specimen() {
 
       <p class="caption">${t("specimen.caption")}</p>
       ${Trial()}
+      ${History()}
     </div>`;
 }
 
@@ -1362,6 +1409,46 @@ async function watch() {
   watching = false;
 }
 
+// A chord is saved in the Linux names everywhere (Super, Alt, Control_R); people see their own keyboard's.
+const OWN_KEYS = {
+  macos: { Super: "⌘ Cmd", Alt: "⌥ Option", Ctrl: "⌃ Control", Control: "⌃ Control" },
+  windows: { Super: "Win", Ctrl: "Ctrl", Control: "Ctrl", Alt: "Alt" },
+};
+const SIDES = { L: "Left", R: "Right" };
+
+/** A saved chord as this system names its keys: Super+Shift+D is ⌘ Cmd+Shift+D on a Mac. */
+function shown(chord) {
+  const own = OWN_KEYS[ui.s?.os] || {};
+  return String(chord).split("+").map((key) => {
+    const [, name, side] = /^(Super|Alt|Ctrl|Control)(?:_([LR]))?$/.exec(key) || [];
+    if (!own[name]) return key;
+    return side ? `${SIDES[side]} ${own[name]}` : own[name];
+  }).join("+");
+}
+
+// Windows has no glyph for its key: its logo, from Simple Icons (icons/windows.svg)
+const WIN_LOGO = html`<svg class="win-logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M0,0H11.377V11.372H0ZM12.623,0H24V11.372H12.623ZM0,12.623H11.377V24H0Zm12.623,0H24V24H12.623"/></svg>`;
+
+/** A chord to show in a template: shown(), with the Windows logo before each Win. */
+function keys(chord) {
+  const text = shown(chord);
+  if (ui.s?.os !== "windows") return text;
+  return text.split(/(?<=^|\+|\s)(?=Win(?:\+|$))/).map((part) => (part.startsWith("Win") ? [WIN_LOGO, part] : part));
+}
+
+/** Back from what people see or type (Cmd, Win, Option, Right ⌘ Cmd) to the saved names. */
+function stored(text) {
+  const names = { cmd: "Super", command: "Super", win: "Super", windows: "Super", super: "Super", option: "Alt", opt: "Alt", alt: "Alt", control: "Ctrl", ctrl: "Ctrl" };
+  return text.split("+").map((part) => {
+    const words = part.replace(/[⌘⊞⌥⌃]/g, "").trim().split(/\s+/);
+    const side = words.length === 2 && /^(left|right)$/i.test(words[0]) ? words.shift()[0].toUpperCase() : "";
+    const name = names[words.join(" ").toLowerCase()];
+    if (!name) return part.trim();
+    // a side makes it a key of its own, which the compositors call Control_R, not Ctrl_R
+    return side ? `${name === "Ctrl" ? "Control" : name}_${side}` : name;
+  }).join("+");
+}
+
 /** Turns a key press into the name a compositor knows it by. */
 function chordOf(e) {
   let key = KEY_NAMES[e.code];
@@ -1385,7 +1472,7 @@ window.addEventListener(
     if (e.key === "Escape") return redraw({ pressing: false });
     const chord = chordOf(e);
     if (!chord) return redraw({ pressing: false, problem: t("hotkey.unknown-key") });
-    redraw({ pressing: false, chord });
+    redraw({ pressing: false, chord: shown(chord) });
     focus("#hotkey-bind");
   },
   true,
@@ -1402,7 +1489,6 @@ async function start() {
     const pref = (name) => ui.s.env[name] ?? values()[name];
     ui.theme = pref("ROOKEY_UI_THEME") || "system";
     ui.lang = pickLang(pref("ROOKEY_UI_LANG"));
-    ui.advanced = isOn(values().ROOKEY_UI_ADVANCED);
     ui.ready = true;
   } catch (e) {
     failed = e;
