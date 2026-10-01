@@ -145,7 +145,7 @@ fn settings_help() -> String {
   ROOKEY_CONTEXT=1     read the screen as recording starts; its terms help the recognizer
   ROOKEY_READER        who reads it: ocr (tesseract, the default), openai, anthropic
   ROOKEY_HISTORY=0     keep no transcripts
-  ROOKEY_QUIET=1       no sounds; ROOKEY_SOUNDS picks rook, notes or pencil
+  ROOKEY_QUIET=1       no sounds; ROOKEY_SOUNDS picks notes, rook or pencil
   ROOKEY_NO_OVERLAY=1  no pill on screen; ROOKEY_PILL is full, compact or dot
   ROOKEY_AUTOUPDATE=0  only say that a release is out, don't install it
 

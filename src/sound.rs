@@ -10,8 +10,8 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 
-/// The sets, the first is the default. Their names are in ui/i18n.js.
-pub const SETS: [&str; 3] = ["rook", "notes", "pencil"];
+/// The sets, the first is the default. Their names are in locales/*.json.
+pub const SETS: [&str; 3] = ["notes", "rook", "pencil"];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Cue {
@@ -155,21 +155,21 @@ fn voices(set: &str, cue: Cue) -> Vec<Voice> {
     let tap = |filter, hz, at, len, level| Tap { filter, hz, at, len, level };
     let caw = |from, to, at, len, level| Caw { from, to, at, len, level };
     match (set, cue) {
-        // soft sine notes: up as it listens, down as it stops
-        ("notes", Start) => vec![tone(587.33, 0.0, 0.09, 0.3), tone(880.0, 0.09, 0.16, 0.3)],
-        ("notes", Stop) => vec![tone(880.0, 0.0, 0.09, 0.3), tone(587.33, 0.09, 0.16, 0.3)],
-        ("notes", Typed) => vec![tone(1174.66, 0.0, 0.08, 0.18)],
-        ("notes", Failed) => vec![tone(196.0, 0.0, 0.14, 0.4), tone(196.0, 0.2, 0.14, 0.4)],
         // a pencil on the pad: no pitch to get tired of
         ("pencil", Start) => vec![tap(Band, 2200.0, 0.0, 0.03, 0.8)],
         ("pencil", Stop) => vec![tap(Band, 2200.0, 0.0, 0.03, 0.8), tap(Band, 1700.0, 0.1, 0.03, 0.8)],
         ("pencil", Typed) => vec![tap(High, 3000.0, 0.0, 0.12, 0.35)],
         ("pencil", Failed) => vec![tap(Low, 220.0, 0.0, 0.16, 1.0)],
         // the rook: a small caw, beak clacks, a keycap knock, two low caws
-        (_, Start) => vec![caw(620.0, 480.0, 0.0, 0.14, 0.5)],
-        (_, Stop) => vec![tap(High, 3500.0, 0.0, 0.012, 0.9), tap(High, 3000.0, 0.06, 0.012, 0.9)],
-        (_, Typed) => vec![tap(Low, 900.0, 0.0, 0.03, 0.9), tone(210.0, 0.0, 0.05, 0.25)],
-        (_, Failed) => vec![caw(340.0, 250.0, 0.0, 0.16, 0.55), caw(330.0, 240.0, 0.22, 0.18, 0.55)],
+        ("rook", Start) => vec![caw(620.0, 480.0, 0.0, 0.14, 0.5)],
+        ("rook", Stop) => vec![tap(High, 3500.0, 0.0, 0.012, 0.9), tap(High, 3000.0, 0.06, 0.012, 0.9)],
+        ("rook", Typed) => vec![tap(Low, 900.0, 0.0, 0.03, 0.9), tone(210.0, 0.0, 0.05, 0.25)],
+        ("rook", Failed) => vec![caw(340.0, 250.0, 0.0, 0.16, 0.55), caw(330.0, 240.0, 0.22, 0.18, 0.55)],
+        // soft sine notes, the default: up as it listens, down as it stops
+        (_, Start) => vec![tone(587.33, 0.0, 0.09, 0.3), tone(880.0, 0.09, 0.16, 0.3)],
+        (_, Stop) => vec![tone(880.0, 0.0, 0.09, 0.3), tone(587.33, 0.09, 0.16, 0.3)],
+        (_, Typed) => vec![tone(1174.66, 0.0, 0.08, 0.18)],
+        (_, Failed) => vec![tone(196.0, 0.0, 0.14, 0.4), tone(196.0, 0.2, 0.14, 0.4)],
     }
 }
 
@@ -283,6 +283,6 @@ mod tests {
             }
         }
         // an unknown set falls back to the default rather than going quiet
-        assert_eq!(render(&voices("nope", Cue::Start), 48_000), render(&voices("rook", Cue::Start), 48_000));
+        assert_eq!(render(&voices("nope", Cue::Start), 48_000), render(&voices("notes", Cue::Start), 48_000));
     }
 }

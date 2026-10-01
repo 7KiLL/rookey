@@ -397,7 +397,7 @@ h4 {
 .switch {
   grid-template-columns: minmax(0, 1fr) auto;
   column-gap: 1.5rem;
-  align-items: center;
+  align-items: start;
 }
 
 /* set apart from the hotkey form above it */
@@ -416,7 +416,17 @@ h4 {
 .choice {
   grid-template-columns: auto minmax(0, 1fr);
   column-gap: 0.875rem;
-  align-items: center;
+  align-items: start;
+}
+
+/* a control sits on its name's first line, not in the middle of the name and what's under it:
+   half of what the line is taller than the control (1lh is the line, the input inherits the font) */
+.choice input[type="radio"] {
+  margin-top: calc((1lh - 1.25rem) / 2);
+}
+
+.switch input[type="checkbox"] {
+  margin-top: calc((1lh - 1.625rem) / 2);
 }
 
 .choice-text,
@@ -698,7 +708,7 @@ input[type="checkbox"] {
 .recent > summary::after {
   content: "";
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1; /* on the title's line, whether the summary line shows under it or not */
   width: 0.625rem;
   height: 0.625rem;
   margin-right: 0.25rem;
@@ -1090,6 +1100,11 @@ textarea:hover {
   gap: 0.5rem;
 }
 
+/* a command that wraps: its Copy button stays in the middle of it */
+.with-button:has(> .fix) {
+  align-items: center;
+}
+
 .with-button .typed-input {
   flex: 1;
   min-width: 0;
@@ -1377,6 +1392,15 @@ textarea:focus-visible {
   margin-top: 0.875rem;
   color: var(--red);
   font-size: 0.9375rem;
+}
+
+/* a long instruction of your own: its start is enough to know it */
+.then:not([hidden]) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
 }
 
 .caption {
