@@ -46,10 +46,8 @@ macro_rules! vlog {
 mod cli;
 mod desktop;
 mod history;
-mod i18n;
-#[cfg(target_os = "macos")]
-mod mac;
 mod hold;
+mod i18n;
 #[cfg(target_os = "linux")]
 mod listen;
 #[cfg(windows)]
@@ -58,6 +56,8 @@ mod listen;
 #[cfg(target_os = "macos")]
 #[path = "listen_mac.rs"]
 mod listen;
+#[cfg(target_os = "macos")]
+mod mac;
 mod models;
 mod overlay;
 #[cfg(target_os = "macos")]
@@ -133,7 +133,11 @@ fn installed() -> std::io::Result<PathBuf> {
 
 fn on_disk(exe: PathBuf) -> PathBuf {
     let name = exe.file_name().unwrap_or_default().to_string_lossy().into_owned();
-    match name.strip_suffix(" (deleted)").map(str::to_string).or_else(|| Some(name.strip_suffix(".old.exe")?.to_string() + ".exe")) {
+    match name
+        .strip_suffix(" (deleted)")
+        .map(str::to_string)
+        .or_else(|| Some(name.strip_suffix(".old.exe")?.to_string() + ".exe"))
+    {
         Some(name) => exe.with_file_name(name),
         None => exe,
     }
@@ -229,10 +233,7 @@ fn parse_config(text: &str) -> HashMap<String, String> {
             continue;
         };
         let value = value.trim();
-        let value = ['"', '\'']
-            .iter()
-            .find_map(|&q| value.strip_prefix(q)?.strip_suffix(q))
-            .unwrap_or(value);
+        let value = ['"', '\''].iter().find_map(|&q| value.strip_prefix(q)?.strip_suffix(q)).unwrap_or(value);
         config.insert(key.trim().to_string(), value.to_string());
     }
     config
@@ -275,7 +276,9 @@ fn cli() -> Res<()> {
         #[cfg(target_os = "macos")]
         Some(Cmd::RestartListen) => return listen::restart(&exe()?).map(drop),
         #[cfg(not(target_os = "macos"))]
-        Some(Cmd::Access | Cmd::Ask { .. } | Cmd::Capture { .. } | Cmd::RestartListen) => return Err(t!("cli.macos-only").into()),
+        Some(Cmd::Access | Cmd::Ask { .. } | Cmd::Capture { .. } | Cmd::RestartListen) => {
+            return Err(t!("cli.macos-only").into());
+        }
     }
     // Rookey opened by itself (a double-click, or macOS reopening it after a permission
     // changed) has nothing to record for: it shows the settings instead
@@ -416,8 +419,7 @@ fn run(mode: Mode, stop_rx: mpsc::Receiver<()>) -> Res<String> {
         }
     };
     // Verbose logs every partial as its own line instead of rewriting one.
-    let show_partials =
-        mode == Mode::Terminal && std::io::stderr().is_terminal() && verbosity() == 0;
+    let show_partials = mode == Mode::Terminal && std::io::stderr().is_terminal() && verbosity() == 0;
     vlog!(2, "backend: {}", setting("ROOKEY_BACKEND").unwrap_or_else(|| "local".into()));
     // Grabbed now, while the window being dictated into is still the one on screen.
     let mut context = spawn_context();
@@ -516,7 +518,8 @@ fn context_terms(context: &mut Option<Context>, max: usize, max_len: usize) -> V
 /// Your own words (ROOKEY_WORDS, comma-separated) first, then the context's, within the
 /// engine's limits. A word longer than the engine takes is left out.
 fn key_terms(context: &mut Option<Context>, max: usize, max_len: usize) -> Vec<String> {
-    let terms = words_and(&setting("ROOKEY_WORDS").unwrap_or_default(), context_terms(context, max, max_len), max, max_len);
+    let terms =
+        words_and(&setting("ROOKEY_WORDS").unwrap_or_default(), context_terms(context, max, max_len), max, max_len);
     vlog!(2, "key terms: {}", terms.join(", "));
     terms
 }
@@ -590,9 +593,9 @@ fn misread(word: &str) -> bool {
 type Loader = thread::JoinHandle<Result<WhisperContext, whisper_rs::WhisperError>>;
 
 fn spawn_model_loader() -> Res<Loader> {
-    let model = setting("ROOKEY_MODEL").map(PathBuf::from).unwrap_or_else(|| {
-        dirs::data_dir().unwrap_or_default().join("rookey").join(DEFAULT_MODEL)
-    });
+    let model = setting("ROOKEY_MODEL")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dirs::data_dir().unwrap_or_default().join("rookey").join(DEFAULT_MODEL));
     if !model.exists() {
         // nothing is downloaded behind anyone's back: the model is picked, or skipped, in setup
         return Err(t!("cli.no-model", path = model.display()).into());
@@ -616,11 +619,7 @@ fn languages() -> Vec<String> {
 }
 
 fn language_list(setting: &str) -> Vec<String> {
-    setting
-        .split(',')
-        .map(|l| l.trim().to_lowercase())
-        .filter(|l| !l.is_empty() && l != "auto")
-        .collect()
+    setting.split(',').map(|l| l.trim().to_lowercase()).filter(|l| !l.is_empty() && l != "auto").collect()
 }
 
 /// The language for the API, None = auto-detect.
@@ -634,11 +633,7 @@ fn lang_code() -> Option<String> {
 
 /// The likeliest of `allowed`, by whisper's probability for each language code.
 fn likeliest(allowed: &[String], prob: impl Fn(&str) -> Option<f32>) -> Option<String> {
-    allowed
-        .iter()
-        .filter_map(|l| Some((l, prob(l)?)))
-        .max_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(l, _)| l.clone())
+    allowed.iter().filter_map(|l| Some((l, prob(l)?))).max_by(|a, b| a.1.total_cmp(&b.1)).map(|(l, _)| l.clone())
 }
 
 type Ws = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
@@ -679,7 +674,8 @@ impl Realtime {
         req.headers_mut().insert("xi-api-key", elevenlabs_key()?.parse()?);
         let (ws, res) = tungstenite::connect(req).map_err(|e| match e {
             tungstenite::Error::Http(res) => {
-                let what = format!("{} {}", res.status(), String::from_utf8_lossy(res.body().as_deref().unwrap_or_default()));
+                let what =
+                    format!("{} {}", res.status(), String::from_utf8_lossy(res.body().as_deref().unwrap_or_default()));
                 t!("cli.elevenlabs", what = what).into()
             }
             e => Box::<dyn std::error::Error>::from(e),
@@ -704,10 +700,8 @@ impl Realtime {
     fn send(&mut self, audio: &[f32], commit: bool) -> Res<()> {
         use base64::Engine;
 
-        let pcm: Vec<u8> = audio
-            .iter()
-            .flat_map(|s| ((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).to_le_bytes())
-            .collect();
+        let pcm: Vec<u8> =
+            audio.iter().flat_map(|s| ((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).to_le_bytes()).collect();
         let msg = serde_json::json!({
             "message_type": "input_audio_chunk",
             "audio_base_64": base64::engine::general_purpose::STANDARD.encode(pcm),
@@ -830,9 +824,7 @@ fn elevenlabs(audio: &[f32], terms: &[String]) -> Res<String> {
     let key = elevenlabs_key()?;
     let wav = wav_bytes(audio);
 
-    let mut form = Form::new()
-        .text("model_id", "scribe_v2")
-        .part("file", Part::bytes(&wav).file_name("rookey.wav"));
+    let mut form = Form::new().text("model_id", "scribe_v2").part("file", Part::bytes(&wav).file_name("rookey.wav"));
     let lang = lang_code();
     if let Some(lang) = &lang {
         form = form.text("language_code", lang);
@@ -973,11 +965,7 @@ fn silent(samples: &[f32], rate: u32) -> bool {
     samples.len() >= rate as usize / 2 && samples.iter().all(|s| s.abs() < SILENCE)
 }
 
-fn build<T>(
-    device: &cpal::Device,
-    config: cpal::StreamConfig,
-    buf: Arc<Mutex<Vec<f32>>>,
-) -> Res<cpal::Stream>
+fn build<T>(device: &cpal::Device, config: cpal::StreamConfig, buf: Arc<Mutex<Vec<f32>>>) -> Res<cpal::Stream>
 where
     T: SizedSample,
     f32: FromSample<T>,
@@ -988,9 +976,10 @@ where
         move |data: &[T], _: &_| {
             // downmix interleaved frames to mono
             let mut buf = buf.lock().unwrap();
-            buf.extend(data.chunks(channels).map(|frame| {
-                frame.iter().map(|&s| f32::from_sample(s)).sum::<f32>() / channels as f32
-            }));
+            buf.extend(
+                data.chunks(channels)
+                    .map(|frame| frame.iter().map(|&s| f32::from_sample(s)).sum::<f32>() / channels as f32),
+            );
         },
         audio_error,
         None,
@@ -1146,7 +1135,13 @@ fn notify(mode: Mode, msg: &str) {
     }
     #[cfg(target_os = "macos")]
     let _ = Command::new("osascript")
-        .args(["-e", &format!(r#"display notification "{}" with title "rookey""#, t!(&format!("notify.{msg}")).replace('"', "'"))])
+        .args([
+            "-e",
+            &format!(
+                r#"display notification "{}" with title "rookey""#,
+                t!(&format!("notify.{msg}")).replace('"', "'")
+            ),
+        ])
         .status();
     // ponytail: no toast on Windows, the sounds say it; a toast needs an app id registered first
     #[cfg(not(any(target_os = "macos", windows)))]
@@ -1196,10 +1191,7 @@ mod tests {
             assert!(ok, "download jfk.wav");
         }
         let bytes = fs::read(path).unwrap();
-        bytes[44..]
-            .chunks_exact(2)
-            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / i16::MAX as f32)
-            .collect()
+        bytes[44..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / i16::MAX as f32).collect()
     }
 
     #[test]
@@ -1216,7 +1208,11 @@ mod tests {
         );
         assert_eq!(config.len(), 3);
         assert_eq!(config["ROOKEY_LANG"], "en"); // the last one wins
-        let probs = |l: &str| match l { "en" => Some(0.2), "uk" => Some(0.5), _ => None };
+        let probs = |l: &str| match l {
+            "en" => Some(0.2),
+            "uk" => Some(0.5),
+            _ => None,
+        };
         assert_eq!(likeliest(&["en".into(), "uk".into(), "xx".into()], probs).as_deref(), Some("uk"));
         assert_eq!(
             without_yap_names("# YAP_X stays\nYAP_LANG=uk\nKEY=YAP_\nYAP_EDIT=x"),
@@ -1250,13 +1246,39 @@ mod tests {
         for junk in ["3aKOHUMN", "A0POTIX", "N0BAGTENE", "PE3OHAHT", "Apy3Ls", "aYZ3EWH", "Кnoпка", "Пpивiт"] {
             assert!(misread(junk), "{junk}");
         }
-        let real = ["7KiLL", "ElevenLabs", "YouTube", "iPhone", "256GB", "usage_limits", "mp3", "H264", "x86_64",
-                    "GPT4o", "k8s", "B2B", "Київ", "ROOKEY_LANG", "v0"];
+        let real = [
+            "7KiLL",
+            "ElevenLabs",
+            "YouTube",
+            "iPhone",
+            "256GB",
+            "usage_limits",
+            "mp3",
+            "H264",
+            "x86_64",
+            "GPT4o",
+            "k8s",
+            "B2B",
+            "Київ",
+            "ROOKEY_LANG",
+            "v0",
+        ];
         for word in real {
             assert!(!misread(word), "{word}");
         }
         // all-letter misreads look like names and stay: the language pack is the fix
-        for kept in ["KOHTPON", "BIAOCKI", "CMOTPETE", "MOPOXEHEM", "OHMMYLLY", "PasHbie", "TTouck", "nMBO", "npuaHaioTca", "AayHBOAKEP"] {
+        for kept in [
+            "KOHTPON",
+            "BIAOCKI",
+            "CMOTPETE",
+            "MOPOXEHEM",
+            "OHMMYLLY",
+            "PasHbie",
+            "TTouck",
+            "nMBO",
+            "npuaHaioTca",
+            "AayHBOAKEP",
+        ] {
             assert!(!misread(kept), "{kept}");
         }
         let screen = "KOHTPON 3aKOHUMN A0POTIX 7KiLL ElevenLabs 256GB N0BAGTENE usage_limits";

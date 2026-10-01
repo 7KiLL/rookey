@@ -1,0 +1,3 @@
+# Close to the hand-formatted style the code had before rustfmt: long lines, short bodies kept on one line.
+max_width = 120
+use_small_heuristics = "Max"

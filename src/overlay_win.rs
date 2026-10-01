@@ -9,7 +9,9 @@ use windows_sys::Win32::Graphics::Gdi::{
     CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, ReleaseDC, SelectObject,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, SetProcessDpiAwarenessContext};
+use windows_sys::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, SetProcessDpiAwarenessContext,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, RegisterClassW,
     SPI_GETWORKAREA, SW_SHOWNOACTIVATE, ShowWindow, SystemParametersInfoW, TranslateMessage, ULW_ALPHA,
@@ -28,7 +30,8 @@ pub fn run() -> crate::Res<()> {
         let (w, h) = ((W * scale) as i32, (H * scale) as i32);
         let mut work = RECT { left: 0, top: 0, right: 0, bottom: 0 };
         SystemParametersInfoW(SPI_GETWORKAREA, 0, (&raw mut work).cast(), 0);
-        let (x, y) = spot((work.right - work.left) as f64, (work.bottom - work.top) as f64, scale as f64, crate::overlay::at());
+        let (x, y) =
+            spot((work.right - work.left) as f64, (work.bottom - work.top) as f64, scale as f64, crate::overlay::at());
         let at = POINT { x: work.left + x.round() as i32, y: work.top + y.round() as i32 };
 
         let class: Vec<u16> = "rookey-overlay\0".encode_utf16().collect();

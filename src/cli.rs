@@ -32,14 +32,18 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Cmd {
     /// Start recording; the next call stops it, transcribes, and types the text where you are
-    #[command(long_about = "Start recording; the next call stops it, transcribes, and types the text into the focused window.\n\n\
+    #[command(
+        long_about = "Start recording; the next call stops it, transcribes, and types the text into the focused window.\n\n\
         Made for a hotkey: bind `rookey toggle` in your desktop, skhd, Raycast or Shortcuts. \
-        One press starts, the next one stops. Every transcript is kept in `rookey history` before it is typed.")]
+        One press starts, the next one stops. Every transcript is kept in `rookey history` before it is typed."
+    )]
     Toggle,
     /// Hold the hotkey (ROOKEY_HOTKEY) to talk, let go to stop; a short tap keeps it recording
-    #[command(long_about = "Hold the hotkey (ROOKEY_HOTKEY) to talk, let go to stop; a tap shorter than 0.3 s keeps it recording until the next press.\n\n\
+    #[command(
+        long_about = "Hold the hotkey (ROOKEY_HOTKEY) to talk, let go to stop; a tap shorter than 0.3 s keeps it recording until the next press.\n\n\
         Runs in the foreground until stopped. `rookey ui` installs it to start at login instead: \
-        a systemd user service on Linux, the Run key on Windows, a launchd agent on macOS.")]
+        a systemd user service on Linux, the Run key on Windows, a launchd agent on macOS."
+    )]
     Listen,
     /// The settings page, with what is missing first (the same as `rookey ui`)
     Setup(Page),

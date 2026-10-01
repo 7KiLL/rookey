@@ -84,7 +84,8 @@ unsafe fn visible_frame(screen: Id) -> Rect {
         #[cfg(target_arch = "x86_64")]
         {
             let mut rect = Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
-            let f: unsafe extern "C" fn(*mut Rect, Id, Id) = std::mem::transmute(objc_msgSend_stret as unsafe extern "C" fn());
+            let f: unsafe extern "C" fn(*mut Rect, Id, Id) =
+                std::mem::transmute(objc_msgSend_stret as unsafe extern "C" fn());
             f(&mut rect, screen, sel_registerName(c"visibleFrame".as_ptr()));
             rect
         }
@@ -161,7 +162,19 @@ pub fn run() -> crate::Res<()> {
             pill.draw(&mut px, scale, now);
             let data = CFDataCreate(std::ptr::null(), px.as_ptr(), px.len() as isize);
             let provider = CGDataProviderCreateWithCFData(data);
-            let image = CGImageCreate(w, h, 8, 32, w * 4, space, PREMULTIPLIED_FIRST | LITTLE_32, provider, std::ptr::null(), false, 0);
+            let image = CGImageCreate(
+                w,
+                h,
+                8,
+                32,
+                w * 4,
+                space,
+                PREMULTIPLIED_FIRST | LITTLE_32,
+                provider,
+                std::ptr::null(),
+                false,
+                0,
+            );
             // no fade from the last frame to this one: that's a layer's habit
             send!(transaction, "begin"; ());
             send!(transaction, "setDisableActions:", true => bool; ());

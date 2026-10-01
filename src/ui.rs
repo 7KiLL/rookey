@@ -36,12 +36,12 @@ const SETTINGS: [&str; 25] = [
     "ROOKEY_SOUND_FAILED",
     "ROOKEY_NO_NOTIFICATIONS",
     "ROOKEY_NO_OVERLAY",
-    "ROOKEY_PILL", // its look: full, compact or dot
-    "ROOKEY_PILL_AT", // where it goes: "x,y" in percent, empty for the bottom centre
-    "ROOKEY_HISTORY", // 0 keeps no history, empty keeps it
-    "ROOKEY_WORDS", // your own names and jargon, comma-separated
+    "ROOKEY_PILL",           // its look: full, compact or dot
+    "ROOKEY_PILL_AT",        // where it goes: "x,y" in percent, empty for the bottom centre
+    "ROOKEY_HISTORY",        // 0 keeps no history, empty keeps it
+    "ROOKEY_WORDS",          // your own names and jargon, comma-separated
     "ROOKEY_KEEP_CLIPBOARD", // macOS: puts the clipboard back after a paste; on unless 0
-    "ROOKEY_AUTOUPDATE", // installs new releases by itself; on unless 0, which only checks
+    "ROOKEY_AUTOUPDATE",     // installs new releases by itself; on unless 0, which only checks
     // the settings page's own look; empty follows the system and the browser
     "ROOKEY_UI_THEME",
     "ROOKEY_UI_LANG",
@@ -54,24 +54,9 @@ const BACKENDS: [&str; 3] = ["local", "elevenlabs", "elevenlabs-realtime"];
 
 /// (id, name, the setting its key goes by, where keys are made); what it's for is `provider.<id>`
 const PROVIDERS: [(&str, &str, &str, &str); 3] = [
-    (
-        "elevenlabs",
-        "ElevenLabs",
-        "ELEVENLABS_API_KEY",
-        "https://elevenlabs.io/app/developers/api-keys",
-    ),
-    (
-        "openai",
-        "OpenAI",
-        "OPENAI_API_KEY",
-        "https://platform.openai.com/api-keys",
-    ),
-    (
-        "anthropic",
-        "Claude",
-        "ANTHROPIC_API_KEY",
-        "https://platform.claude.com/settings/keys",
-    ),
+    ("elevenlabs", "ElevenLabs", "ELEVENLABS_API_KEY", "https://elevenlabs.io/app/developers/api-keys"),
+    ("openai", "OpenAI", "OPENAI_API_KEY", "https://platform.openai.com/api-keys"),
+    ("anthropic", "Claude", "ANTHROPIC_API_KEY", "https://platform.claude.com/settings/keys"),
 ];
 const MAX_REQUEST: u64 = 64 * 1024;
 const MAX_EDIT: usize = 2000; // ElevenLabs' limit for transcript_edit
@@ -106,8 +91,8 @@ fn move_keys() {
         let Some(key) = settings.get(var) else { continue };
         let kept = read(Some(to.clone())).get(var).cloned().unwrap_or_else(|| key.clone());
         // written to its new place before it leaves the old one
-        let moved = write(&to, &[(var.to_string(), kept)])
-            .and_then(|()| write(&from, &[(var.to_string(), String::new())]));
+        let moved =
+            write(&to, &[(var.to_string(), kept)]).and_then(|()| write(&from, &[(var.to_string(), String::new())]));
         match moved {
             Ok(()) => eprintln!("rookey ui: moved {var} from {} to {}", tilde(&from), tilde(&to)),
             Err(e) => eprintln!("rookey ui: {var} is still in {}: {e}", tilde(&from)),
@@ -154,7 +139,8 @@ fn token() -> Res<String> {
 fn open_browser(url: &str, browser: bool) -> std::io::Result<()> {
     if !browser {
         // Rookey is a copy on its own: its window is next to the rookey it came from
-        let helper = crate::installed()?.with_file_name(if cfg!(windows) { "rookey-window.exe" } else { "rookey-window" });
+        let helper =
+            crate::installed()?.with_file_name(if cfg!(windows) { "rookey-window.exe" } else { "rookey-window" });
         let mut cmd = Command::new(&helper);
         cmd.arg(url).stdin(Stdio::null()).stdout(Stdio::null());
         // WebKitGTK's DMABUF renderer flickers on scroll with NVIDIA's own driver; a value the
@@ -259,7 +245,9 @@ fn serve(stream: &TcpStream, token: &str) -> Res<()> {
         ("GET", "/api/state") => Ok(state_after_listening()),
         // what changes by itself, asked for often while it does
         ("GET", "/api/history") => Ok(history()),
-        ("GET", "/api/progress") => Ok(json!({ "download": models::download_state(), "trial": trial(), "update": update::state() })),
+        ("GET", "/api/progress") => {
+            Ok(json!({ "download": models::download_state(), "trial": trial(), "update": update::state() }))
+        }
         ("GET", "/api/update") => Ok(update::state()),
         ("POST", "/api/save") => match changes(&req.body) {
             Ok(changes) => config_path()
@@ -530,7 +518,9 @@ pub fn ask_here(args: &[String]) -> Res<()> {
         Some("screen-privacy") => mac::ask_screen(),
         Some("accessibility") => mac::ask_typing(),
         // any event at all brings up the question, and this one changes nothing
-        Some("automation") => drop(Command::new("osascript").args(["-e", r#"tell application "System Events" to get name"#]).output()),
+        Some("automation") => {
+            drop(Command::new("osascript").args(["-e", r#"tell application "System Events" to get name"#]).output())
+        }
         _ => return Err("ask for what?".into()),
     }
     Ok(())
@@ -585,10 +575,18 @@ fn opens(id: &str, os: &str) -> Option<&'static str> {
 fn pane(what: &str, os: &str, on_path: &dyn Fn(&str) -> bool) -> Option<(&'static str, &'static [&'static str])> {
     Some(match (os, what) {
         // the older pane ids, which System Settings still answers to since Ventura
-        ("macos", "mic-privacy") => ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"]),
-        ("macos", "screen-privacy") => ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"]),
-        ("macos", "accessibility") => ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]),
-        ("macos", "automation") => ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"]),
+        ("macos", "mic-privacy") => {
+            ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"])
+        }
+        ("macos", "screen-privacy") => {
+            ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"])
+        }
+        ("macos", "accessibility") => {
+            ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+        }
+        ("macos", "automation") => {
+            ("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"])
+        }
         ("macos", "sound") => ("open", &["x-apple.systempreferences:com.apple.Sound-Settings.extension"]),
         ("windows", "mic-privacy") => ("explorer", &["ms-settings:privacy-microphone"]),
         ("windows", "sound") => ("explorer", &["ms-settings:sound"]),
@@ -677,7 +675,14 @@ fn rookey_app() -> bool {
 /// What recording needs and is missing on this machine, for the settings as they are, with
 /// the command that installs it, or the settings pane that turns it on.
 /// `mic` is `default_mic()`'s answer, passed in: tests never touch the machine's audio.
-fn checks(get: &dyn Fn(&str) -> String, mic: (bool, Option<String>), heard: Option<bool>, model_found: bool, has_key: bool, access: &Access) -> Vec<Value> {
+fn checks(
+    get: &dyn Fn(&str) -> String,
+    mic: (bool, Option<String>),
+    heard: Option<bool>,
+    model_found: bool,
+    has_key: bool,
+    access: &Access,
+) -> Vec<Value> {
     let mut checks = Vec::new();
     let mut check = |id: &str, ok: bool, title: &str, missing: &str, fix: Option<String>| {
         let open = opens(id, env::consts::OS).filter(|what| pane(what, env::consts::OS, &on_path).is_some());
@@ -695,25 +700,13 @@ fn checks(get: &dyn Fn(&str) -> String, mic: (bool, Option<String>), heard: Opti
     check("mic", mic, &title, &t!("check.mic.missing"), None);
     let allowed = access.mic != Some(false);
     if !allowed {
-        check(
-            "mic-access",
-            false,
-            &t!("check.mic-access.title"),
-            &t!("check.mic-access.missing", app = app),
-            None,
-        );
+        check("mic-access", false, &t!("check.mic-access.title"), &t!("check.mic-access.missing", app = app), None);
     }
     // A wireless headset that is off still has its dongle plugged in: only listening tells.
     // ponytail: a headset with a noise gate sends exact zeros while you're quiet too; the
     // advice says to speak and check again rather than guessing which one it is
     if mic && allowed && heard == Some(false) {
-        check(
-            "mic-silent",
-            false,
-            &t!("check.mic-silent.title"),
-            &t!("check.mic-silent.missing"),
-            None,
-        );
+        check("mic-silent", false, &t!("check.mic-silent.title"), &t!("check.mic-silent.missing"), None);
     }
 
     let backend = env::var("ROOKEY_BACKEND").unwrap_or_else(|_| get("ROOKEY_BACKEND"));
@@ -736,13 +729,7 @@ fn checks(get: &dyn Fn(&str) -> String, mic: (bool, Option<String>), heard: Opti
         );
     }
     if access.automation == Some(false) {
-        check(
-            "automation",
-            false,
-            &t!("check.automation.title"),
-            &t!("check.automation.missing", app = app),
-            None,
-        );
+        check("automation", false, &t!("check.automation.title"), &t!("check.automation.missing", app = app), None);
     }
     let context = env::var("ROOKEY_CONTEXT").unwrap_or_else(|_| get("ROOKEY_CONTEXT"));
     if context == "1" || context == "true" {
@@ -780,7 +767,10 @@ fn checks(get: &dyn Fn(&str) -> String, mic: (bool, Option<String>), heard: Opti
         if !packs.is_empty() {
             needed.push(installer().and_then(|i| lang_packages(i, &packs)));
         }
-        let fix = needed.into_iter().collect::<Option<Vec<_>>>().and_then(|p| Some(format!("{} {}", installer()?, p.join(" "))));
+        let fix = needed
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .and_then(|p| Some(format!("{} {}", installer()?, p.join(" "))));
         let mut words = Vec::new();
         if !missing.is_empty() {
             words.push(t!("check.screen.missing", tools = missing.join(", ")));
@@ -885,7 +875,11 @@ fn default_mic() -> (bool, Option<String>) {
     let sources: Vec<Value> = serde_json::from_slice(&list).unwrap_or_default();
     let Some(source) = sources.iter().find(|s| s["name"] == default.as_str()) else { return (false, None) };
     let port = source["active_port"].as_str();
-    let unplugged = source["ports"].as_array().into_iter().flatten().any(|p| p["name"].as_str() == port && p["availability"] == "not available");
+    let unplugged = source["ports"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|p| p["name"].as_str() == port && p["availability"] == "not available");
     let ok = !default.ends_with(".monitor") && !unplugged;
     (ok, source["description"].as_str().map(str::to_string))
 }
@@ -915,7 +909,13 @@ fn changes(body: &[u8]) -> Res<Vec<(String, String)>> {
             }
             // one language, or several to choose between: "en" or "en,uk"
             "ROOKEY_LANG" => {
-                value = value.to_lowercase().split(',').map(str::trim).filter(|c| !c.is_empty()).collect::<Vec<_>>().join(",");
+                value = value
+                    .to_lowercase()
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|c| !c.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(",");
                 let code = |c: &str| (2..=3).contains(&c.len()) && c.chars().all(|c| c.is_ascii_lowercase());
                 if !value.split(',').all(|c| c.is_empty() || c == "auto" || code(c)) {
                     return Err(t!("server.lang-code", value = value).into());
@@ -1103,7 +1103,6 @@ fn listen(settings: &Path, chord: &str, replace: bool) -> Res<Value> {
     Ok(state())
 }
 
-
 /// A test recording from the page: the same road a dictation takes, with the text shown
 /// instead of typed.
 struct Trial {
@@ -1258,11 +1257,8 @@ mod tests {
     #[test]
     fn update_keeps_the_rest() {
         let text = "# mine\nROOKEY_LANG=uk\nOTHER=1\n\nROOKEY_EDIT=old\nROOKEY_LANG=en\n";
-        let changes = [
-            change("ROOKEY_LANG", "de"),
-            change("ROOKEY_EDIT", ""),
-            change("ROOKEY_CONTEXT", "cat \"my terms.txt\""),
-        ];
+        let changes =
+            [change("ROOKEY_LANG", "de"), change("ROOKEY_EDIT", ""), change("ROOKEY_CONTEXT", "cat \"my terms.txt\"")];
         assert_eq!(
             update_config(text, &changes),
             "# mine\nROOKEY_LANG=de\nOTHER=1\n\nROOKEY_CONTEXT=cat \"my terms.txt\"\n"
@@ -1280,7 +1276,8 @@ mod tests {
 
     #[test]
     fn words_and_clipboard_are_checked() {
-        let words = |v: &str| changes(format!(r#"{{"ROOKEY_WORDS": {}}}"#, serde_json::to_string(v).unwrap()).as_bytes());
+        let words =
+            |v: &str| changes(format!(r#"{{"ROOKEY_WORDS": {}}}"#, serde_json::to_string(v).unwrap()).as_bytes());
         assert_eq!(words(" rookey, Kyiv\nOblast ,,rookey").unwrap(), [change("ROOKEY_WORDS", "rookey,Kyiv Oblast")]);
         assert_eq!(words("").unwrap(), [change("ROOKEY_WORDS", "")]);
         assert!(words(&"x".repeat(50)).is_err());
@@ -1315,8 +1312,12 @@ mod tests {
         assert_eq!(changes(br#"{"ROOKEY_PILL": "dot"}"#).unwrap(), [change("ROOKEY_PILL", "dot")]);
         assert_eq!(changes(br#"{"ROOKEY_PILL_AT": "12,0"}"#).unwrap(), [change("ROOKEY_PILL_AT", "12,0")]);
         assert_eq!(changes(br#"{"ROOKEY_PILL_AT": ""}"#).unwrap(), [change("ROOKEY_PILL_AT", "")]);
-        for bad in [r#"{"ROOKEY_PILL_AT": "120,5"}"#, r#"{"ROOKEY_PILL_AT": "top"}"#, r#"{"ROOKEY_PILL_AT": "5,5
-PATH=/tmp"}"#] {
+        for bad in [
+            r#"{"ROOKEY_PILL_AT": "120,5"}"#,
+            r#"{"ROOKEY_PILL_AT": "top"}"#,
+            r#"{"ROOKEY_PILL_AT": "5,5
+PATH=/tmp"}"#,
+        ] {
             assert!(changes(bad.as_bytes()).is_err(), "{bad}");
         }
         assert_eq!(changes(br#"{"ROOKEY_SOUNDS": "pencil"}"#).unwrap(), [change("ROOKEY_SOUNDS", "pencil")]);
@@ -1359,7 +1360,14 @@ PATH=/tmp"}"#] {
     fn open_takes_only_its_names() {
         let all = |_: &str| true;
         for os in ["macos", "windows", "linux"] {
-            for what in ["", "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera", "sound; rm -rf ~", "ms-settings:", "../sound", "SOUND"] {
+            for what in [
+                "",
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera",
+                "sound; rm -rf ~",
+                "ms-settings:",
+                "../sound",
+                "SOUND",
+            ] {
                 assert!(pane(what, os, &all).is_none(), "{os} {what}");
             }
         }
@@ -1372,7 +1380,10 @@ PATH=/tmp"}"#] {
         );
         assert_eq!(pane("mic-privacy", "windows", &all), Some(("explorer", &["ms-settings:privacy-microphone"][..])));
         // Linux opens a mixer only when one is installed, the first there is
-        assert_eq!(pane("sound", "linux", &|p| p == "gnome-control-center"), Some(("gnome-control-center", &["sound"][..])));
+        assert_eq!(
+            pane("sound", "linux", &|p| p == "gnome-control-center"),
+            Some(("gnome-control-center", &["sound"][..]))
+        );
         assert_eq!(pane("sound", "linux", &|_| false), None);
         assert_eq!(pane("mic-privacy", "linux", &all), None);
     }
@@ -1404,7 +1415,10 @@ PATH=/tmp"}"#] {
         let screen = |k: &str| if k == "ROOKEY_CONTEXT" { "1".to_string() } else { String::new() };
         let denied = Access { mic: Some(false), screen: Some(false), typing: Some(false), automation: Some(false) };
         let ids = |access: &Access, heard| -> Vec<(String, bool)> {
-            checks(&screen, (true, None), heard, true, true, access).iter().map(|c| (c["id"].as_str().unwrap().to_string(), c["ok"] == true)).collect()
+            checks(&screen, (true, None), heard, true, true, access)
+                .iter()
+                .map(|c| (c["id"].as_str().unwrap().to_string(), c["ok"] == true))
+                .collect()
         };
         let got = ids(&denied, Some(false));
         for id in ["mic-access", "typing-access", "automation", "screen-access"] {
@@ -1414,7 +1428,9 @@ PATH=/tmp"}"#] {
         assert!(!got.iter().any(|c| c.0 == "mic-silent"));
         let allowed = Access { mic: Some(true), screen: Some(true), typing: Some(true), automation: None };
         let got = ids(&allowed, Some(true));
-        assert!(got.contains(&("typing-access".to_string(), true)) && got.contains(&("screen-access".to_string(), true)));
+        assert!(
+            got.contains(&("typing-access".to_string(), true)) && got.contains(&("screen-access".to_string(), true))
+        );
         assert!(!got.iter().any(|c| c.0 == "mic-access" || c.0 == "automation"));
         // elsewhere nothing is asked, so there are no such rows
         let got = ids(&Access::default(), None);
@@ -1424,9 +1440,15 @@ PATH=/tmp"}"#] {
     #[test]
     fn language_pack_names() {
         let packs = ["ukr", "chi_sim"];
-        assert_eq!(lang_packages("sudo pacman -S --needed", &packs).unwrap(), "tesseract-data-ukr tesseract-data-chi_sim");
+        assert_eq!(
+            lang_packages("sudo pacman -S --needed", &packs).unwrap(),
+            "tesseract-data-ukr tesseract-data-chi_sim"
+        );
         assert_eq!(lang_packages("sudo apt install", &packs).unwrap(), "tesseract-ocr-ukr tesseract-ocr-chi-sim");
-        assert_eq!(lang_packages("sudo dnf install", &packs).unwrap(), "tesseract-langpack-ukr tesseract-langpack-chi_sim");
+        assert_eq!(
+            lang_packages("sudo dnf install", &packs).unwrap(),
+            "tesseract-langpack-ukr tesseract-langpack-chi_sim"
+        );
         assert_eq!(lang_packages("brew install", &packs).unwrap(), "tesseract-lang");
         assert_eq!(lang_packages("zypper in", &packs), None);
     }

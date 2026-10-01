@@ -76,7 +76,8 @@ fn say(lang: &str, key: &str, vars: &[(&str, &dyn Display)]) -> String {
     };
     let text = match value {
         Value::Object(forms) => {
-            let n = vars.iter().find(|(name, _)| *name == "n").and_then(|(_, v)| v.to_string().parse().ok()).unwrap_or(0);
+            let n =
+                vars.iter().find(|(name, _)| *name == "n").and_then(|(_, v)| v.to_string().parse().ok()).unwrap_or(0);
             forms.get(plural(lang, n)).or_else(|| forms.get("other")).and_then(Value::as_str).unwrap_or(key)
         }
         v => v.as_str().unwrap_or(key),
@@ -142,7 +143,10 @@ mod tests {
                 let allowed: Vec<&str> = texts(theirs).into_iter().flat_map(slots).collect();
                 for text in texts(value) {
                     for slot in slots(text) {
-                        assert!(allowed.contains(&slot), "locales/{id}.json: {key} has {{{slot}}}, which English doesn't fill in");
+                        assert!(
+                            allowed.contains(&slot),
+                            "locales/{id}.json: {key} has {{{slot}}}, which English doesn't fill in"
+                        );
                     }
                 }
             }
@@ -154,11 +158,19 @@ mod tests {
         let en = words("en").unwrap();
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut asked = 0;
-        for file in std::fs::read_dir(src).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rs")) {
+        for file in std::fs::read_dir(src)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "rs"))
+        {
             let text = std::fs::read_to_string(&file).unwrap();
             // literal keys only: t!(&format!(...)) ones are checked where they're built
-            let calls = text.match_indices("t!(\"").filter(|(at, _)| !text[..*at].ends_with(|c: char| c.is_alphanumeric() || c == '_'));
-            let starts = calls.map(|(at, m)| at + m.len()).chain(text.match_indices("i18n::t(\"").map(|(at, m)| at + m.len()));
+            let calls = text
+                .match_indices("t!(\"")
+                .filter(|(at, _)| !text[..*at].ends_with(|c: char| c.is_alphanumeric() || c == '_'));
+            let starts =
+                calls.map(|(at, m)| at + m.len()).chain(text.match_indices("i18n::t(\"").map(|(at, m)| at + m.len()));
             for start in starts.collect::<Vec<_>>() {
                 let key = text[start..].split('"').next().unwrap();
                 if key == "key" || key == "no.such.key" {

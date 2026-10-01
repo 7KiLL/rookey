@@ -124,7 +124,9 @@ fn release(answer: &Value, asset: &str) -> Res<Release> {
     let tag = answer["tag_name"].as_str().unwrap_or_default();
     let version = version(tag).ok_or_else(|| t!("update.bad-tag", tag = format!("{tag:?}")))?;
     let url = |name: &str| {
-        answer["assets"].as_array()?.iter().find(|a| a["name"] == name)?["browser_download_url"].as_str().map(str::to_string)
+        answer["assets"].as_array()?.iter().find(|a| a["name"] == name)?["browser_download_url"]
+            .as_str()
+            .map(str::to_string)
     };
     Ok(Release {
         version: format!("{}.{}.{}", version.0, version.1, version.2),
@@ -346,7 +348,9 @@ pub fn run(install: bool) -> Res<()> {
         Some((found, false)) => {
             println!("{}", t!("update.is-out", version = found.version, current = current()));
             match who {
-                Some(who) => println!("{}", t!("update.came-from", path = crate::ui::tilde(&exe), who = managed_words(who))),
+                Some(who) => {
+                    println!("{}", t!("update.came-from", path = crate::ui::tilde(&exe), who = managed_words(who)))
+                }
                 None => println!("{}", t!("update.run-update")),
             }
         }
@@ -363,12 +367,11 @@ fn install_release(found: &Release) -> Res<()> {
     let dir = exe.parent().ok_or_else(|| t!("update.no-folder"))?;
     // next to the binary, so the files are renamed into place, never copied
     let work = dir.join(format!(".rookey-update-{}", std::process::id()));
-    fs::create_dir_all(&work).map_err(|e| {
-        t!("update.cant-write", path = crate::ui::tilde(dir), why = e)
-    })?;
+    fs::create_dir_all(&work).map_err(|e| t!("update.cant-write", path = crate::ui::tilde(dir), why = e))?;
     let done = (|| -> Res<()> {
         let asset = ASSET.ok_or_else(|| t!("update.unsupported"))?;
-        let sums_url = found.sums.as_deref().ok_or_else(|| t!("update.no-sums", version = found.version, sums = SUMS))?;
+        let sums_url =
+            found.sums.as_deref().ok_or_else(|| t!("update.no-sums", version = found.version, sums = SUMS))?;
         let sums = get(sums_url)?.body_mut().read_to_string()?;
         sum_for(&sums, asset).ok_or_else(|| t!("update.no-sum", sums = SUMS, asset = asset))?; // before the download
         let archive = work.join(asset);
@@ -586,7 +589,13 @@ mod tests {
         assert_eq!(asset("freebsd", "x86_64", false), None);
         // every name here is one release.yml builds
         let workflow = include_str!("../.github/workflows/release.yml");
-        for (os, arch, cuda) in [("linux", "x86_64", false), ("linux", "x86_64", true), ("macos", "aarch64", false), ("windows", "x86_64", false), ("windows", "x86_64", true)] {
+        for (os, arch, cuda) in [
+            ("linux", "x86_64", false),
+            ("linux", "x86_64", true),
+            ("macos", "aarch64", false),
+            ("windows", "x86_64", false),
+            ("windows", "x86_64", true),
+        ] {
             let name = asset(os, arch, cuda).unwrap();
             let build = name.trim_start_matches("rookey-").trim_end_matches(".tar.gz").trim_end_matches(".zip");
             assert!(workflow.contains(&format!("name: {build},")), "{build} is not in release.yml");
@@ -603,7 +612,14 @@ mod tests {
             ],
         });
         let found = release(&answer, "rookey-x86_64-linux.tar.gz").unwrap();
-        assert_eq!(found, Release { version: "0.2.0".into(), archive: "https://x/linux.tar.gz".into(), sums: Some("https://x/SHA256SUMS".into()) });
+        assert_eq!(
+            found,
+            Release {
+                version: "0.2.0".into(),
+                archive: "https://x/linux.tar.gz".into(),
+                sums: Some("https://x/SHA256SUMS".into())
+            }
+        );
         assert!(release(&answer, "rookey-x86_64-windows.zip").is_err());
         let mut draft = answer.clone();
         draft["prerelease"] = json!(true);
@@ -617,7 +633,9 @@ mod tests {
     fn checksums_are_read_and_matched() {
         let a = "a".repeat(64);
         let b = "B".repeat(64);
-        let sums = format!("{a}  rookey-x86_64-linux.tar.gz\n{b} *rookey-x86_64-windows.zip\nshort  rookey-aarch64-macos.tar.gz\n");
+        let sums = format!(
+            "{a}  rookey-x86_64-linux.tar.gz\n{b} *rookey-x86_64-windows.zip\nshort  rookey-aarch64-macos.tar.gz\n"
+        );
         assert_eq!(sum_for(&sums, "rookey-x86_64-linux.tar.gz"), Some(a.clone()));
         assert_eq!(sum_for(&sums, "rookey-x86_64-windows.zip"), Some("b".repeat(64)));
         assert_eq!(sum_for(&sums, "rookey-aarch64-macos.tar.gz"), None);

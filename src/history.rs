@@ -24,7 +24,8 @@ fn on(value: Option<&str>) -> bool {
 
 /// Keeps a transcript, with history on. A failure here costs the line, never the dictation.
 pub fn save(text: &str) {
-    let setting = env::var("ROOKEY_HISTORY").ok().or_else(|| crate::CONFIG.read().unwrap().get("ROOKEY_HISTORY").cloned());
+    let setting =
+        env::var("ROOKEY_HISTORY").ok().or_else(|| crate::CONFIG.read().unwrap().get("ROOKEY_HISTORY").cloned());
     let Some(path) = path() else { return };
     if let Err(e) = add(&path, text, setting.as_deref(), KEEP, crate::status::now_ms()) {
         eprintln!("{}", crate::t!("history.failed", path = path.display(), why = e));
