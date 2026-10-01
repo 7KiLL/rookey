@@ -351,6 +351,7 @@ OPENAI_API_KEY=sk-... cargo test --release --features cuda -- --ignored screen  
 
 - [AGENTS.md](AGENTS.md) lists the rules a change must keep, for people and coding agents alike.
 - A new language is one file: [locales/README.md](locales/README.md).
+- Run `cargo fmt --all` before a commit: CI fails on unformatted code.
 - Pull request titles are [Conventional Commits](https://www.conventionalcommits.org) (`feat(ui): …`, `fix: …`). A `v*` tag builds every archive above and writes the release notes from them (`cliff.toml`).
 - Security reports go through [SECURITY.md](SECURITY.md), not public issues.
 
