@@ -13,7 +13,7 @@
 @font-face { font-family: "Martian Mono"; src: url("/fonts/martian-mono-latin.woff2") format("woff2"); font-weight: 100 800; font-stretch: 75% 112.5%; font-display: swap; }
 
 :root {
-  --paper: #E8EFDF; --raised: #F6F9EF; --ink: #17231E; --soft: #4A5B52; --rule: #B5C9B4;
+  --paper: #E8EFDF; --raised: #F6F9EF; --wash: #F1F5E9; --ink: #17231E; --soft: #4A5B52; --rule: #B5C9B4;
   --red: #C0342B; --red-hover: #A32A22; --on-red: #F6F9EF;
   --band: #17231E; --band-ink: #E4ECDD; --band-soft: #9DB0A3; --band-card: #1B2621; --band-rule: #2F4137; --band-red: #F0645A;
   --pill: #17231E; --pill-ink: #F6F9EF; --pill-ring: rgba(246,249,239,0.18); --pill-red: #E5584C;
@@ -24,7 +24,7 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #121A16; --raised: #1B2621; --ink: #E4ECDD; --soft: #9DB0A3; --rule: #2F4137;
+    --paper: #121A16; --raised: #1B2621; --wash: #18221D; --ink: #E4ECDD; --soft: #9DB0A3; --rule: #2F4137;
     --red: #F0645A; --red-hover: #D9544B; --on-red: #121A16;
     --band: #0B110E; --band-card: #16201B;
     --code: #0B110E;
@@ -75,20 +75,26 @@ nav .extra { display: none; }
 .cta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin: 32px 0 16px; }
 .cta .others { color: var(--ink); font-weight: 500; }
 
-/* the pad: what you said | what got typed */
-.pad { margin: 0; background: var(--raised); border: 1px solid var(--rule); border-radius: 18px; overflow: hidden; box-shadow: 0 1px 0 var(--rule), 0 24px 48px -28px rgba(0,0,0,0.35); }
-.pad-top { height: 52px; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--rule); font-family: var(--keys); font-size: 13px; }
-.rec { display: flex; align-items: center; gap: 10px; color: var(--red); font-weight: 600; }
+/* the pad: a lighter patch of the page, what you said over what got typed, one sentence at a time */
+.pad { margin: 0; background: var(--wash); border-radius: 24px; overflow: hidden; }
+.pad-top { height: 56px; padding: 0 22px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-family: var(--keys); font-size: 12px; }
+.rec { display: flex; align-items: center; gap: 10px; color: var(--red); font-weight: 600; white-space: nowrap; }
 .rec::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--red); animation: blink 1.4s ease-in-out infinite; }
 @keyframes blink { 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .rec::before { animation: none; } }
 .win-logo { width: 0.85em; height: 0.85em; margin-right: 0.35em; vertical-align: -0.05em; fill: currentColor; }
 kbd { font-size: 12px; padding: 4px 8px; border: 1px solid var(--ink); border-radius: 6px; box-shadow: 0 2px 0 var(--ink); background: var(--raised); color: var(--ink); white-space: nowrap; }
-.pad-cols { display: grid; }
-@media (min-width: 600px) { .pad-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.pad-col { padding: 24px 24px 32px; display: flex; flex-direction: column; gap: 24px; font-size: 18px; line-height: 1.6; }
-.pad-col + .pad-col { border-top: 2px solid var(--red); }
-@media (min-width: 600px) { .pad-col + .pad-col { border-top: 0; border-left: 2px solid var(--red); } }
+.pad-col { display: grid; align-content: start; gap: 14px; min-height: 150px; padding: 20px 22px 8px; font-size: 17px; line-height: 1.55; }
+.pad-col:first-child { min-height: 164px; margin: 0 22px; padding: 12px 0 20px; border-bottom: 2px solid color-mix(in srgb, var(--red) 45%, transparent); }
+@media (min-width: 600px) {
+  .pad { border-radius: 28px; }
+  .pad-top { height: 64px; padding: 0 44px; font-size: 13px; }
+  .pad-col { min-height: 140px; padding: 28px 44px 12px; font-size: 19px; line-height: 1.6; }
+  .pad-col:first-child { min-height: 168px; margin: 0 44px; padding: 20px 0 28px; }
+}
+/* every sentence sits in the same cell: the pad keeps the tallest one's height, so nothing jumps */
+.pad-col p { grid-area: 2 / 1; }
+.pad-col p.off { visibility: hidden; }
 .pad-col.typed p { font-weight: 500; }
 .pad s { color: var(--red); text-decoration-thickness: 2px; }
 .term { font-family: var(--keys); font-size: 15px; background: var(--paper); padding: 1px 6px; border-radius: 4px; }
@@ -97,7 +103,9 @@ kbd { font-size: 12px; padding: 4px 8px; border: 1px solid var(--ink); border-ra
 .pad-top .rec.idle, .pad-top .rec.trans { color: var(--soft); }
 .pad-top .rec.idle::before, .pad-top .rec.trans::before, .pad-top .rec.done::before { background: var(--soft); animation: none; }
 .pad-top .rec.done { color: var(--ink); }
-.keys { display: flex; align-items: center; gap: 6px; }
+.keys { display: flex; align-items: center; gap: 4px; }
+.keys .hold { display: none; }
+@media (min-width: 600px) { .keys { gap: 6px; } .keys .hold { display: inline; } }
 .pad-top kbd { transition: transform 0.08s, box-shadow 0.08s; }
 .pad-top kbd.down { transform: translateY(2px); box-shadow: 0 0 0 var(--ink); background: var(--paper); }
 /* the demo: every word is laid out from the start and only shows up, so nothing reflows */
@@ -110,7 +118,8 @@ kbd { font-size: 12px; padding: 4px 8px; border: 1px solid var(--ink); border-ra
 .pad-cols p { transition: opacity 0.5s; }
 .pad.fading .pad-cols p { opacity: 0; }
 /* the pill, as rookey shows it at the bottom of the screen */
-.edge { height: 76px; display: flex; align-items: center; justify-content: center; border-top: 1px solid var(--rule); background: var(--paper); }
+.edge { height: 72px; display: flex; align-items: center; justify-content: center; }
+@media (min-width: 600px) { .edge { height: 88px; } }
 .pill { display: inline-flex; align-items: center; gap: 10px; height: 36px; padding: 0 16px 0 14px; border-radius: 18px; background: var(--pill); color: var(--pill-ink); box-shadow: 0 0 0 1px var(--pill-ring); font-size: 13px; opacity: 0; transform: translateY(10px); transition: opacity 0.25s, transform 0.25s; }
 .pill:not([data-state="idle"]) { opacity: 1; transform: none; }
 .pill > span { display: none; align-items: center; gap: 10px; }
@@ -239,18 +248,14 @@ footer .brand svg { width: 26px; height: 26px; }
     </div>
 
     <figure class="pad" id="pad" aria-label="rookey at work: you hold the keys and talk, it drops the filler words and types a clean sentence">
-      <div class="pad-top" aria-hidden="true"><span class="rec done" id="status">typed 5 words</span><span class="soft keys">hold <kbd>Super</kbd><kbd>Shift</kbd><kbd>D</kbd></span></div>
+      <div class="pad-top" aria-hidden="true"><span class="rec done" id="status">typed 5 words</span><span class="soft keys"><span class="hold">hold</span><kbd>Super</kbd><kbd>Shift</kbd><kbd>D</kbd></span></div>
       <div class="pad-cols" aria-hidden="true">
         <div class="pad-col">
           <div class="kicker">You said</div>
-          <p><s>so um</s> can you push the fix to <s>like</s> the main branch before <s>uh</s> the standup</p>
-          <p><s>ok so</s> the <s>the</s> review is moved to <s>uh</s> thursday at ten</p>
           <p>rename <s>uh</s> use settings store before the merge</p>
         </div>
         <div class="pad-col typed">
           <div class="kicker">rookey typed</div>
-          <p>Can you push the fix to the main branch before the standup?</p>
-          <p>The review is moved to Thursday at ten.</p>
           <p>Rename <span class="term">useSettingsStore</span> before the merge.<span class="caret"></span></p>
         </div>
       </div>
@@ -526,7 +531,7 @@ pick(document.getElementById(`tab-${os || "linux"}`));
     const words = p.s.said.map((tok) => s.appendChild(make("span", "w" + (tok.endsWith("~") ? " screen" : ""), tok.replace(/[*~]$/, ""))));
     said.append(s);
     typed.append(y);
-    return { words, typed: y, n: -1, caret: null };
+    return { said: s, words, typed: y, n: -1, caret: null };
   });
 
   function draw(t) {
@@ -549,6 +554,8 @@ pick(document.getElementById(`tab-${os || "linux"}`));
     pad.classList.toggle("fading", t > total - 600);
     steps.forEach((step, i) => {
       const row = rows[i];
+      row.said.classList.toggle("off", i !== last);
+      row.typed.classList.toggle("off", i !== last);
       step.words.forEach((at, k) => {
         row.words[k].classList.toggle("on", t >= at);
         row.words[k].classList.toggle("struck", step.s.said[k].endsWith("*") && t >= at + 420);
