@@ -40,7 +40,7 @@ const SETTINGS: [&str; 25] = [
     "ROOKEY_PILL_AT",        // where it goes: "x,y" in percent, empty for the bottom centre
     "ROOKEY_HISTORY",        // 0 keeps no history, empty keeps it
     "ROOKEY_WORDS",          // your own names and jargon, comma-separated
-    "ROOKEY_KEEP_CLIPBOARD", // macOS: puts the clipboard back after a paste; on unless 0
+    "ROOKEY_KEEP_CLIPBOARD", // macOS, GNOME, KDE: puts the clipboard back after a paste; on unless 0
     "ROOKEY_AUTOUPDATE",     // installs new releases by itself; on unless 0, which only checks
     // the settings page's own look; empty follows the system and the browser
     "ROOKEY_UI_THEME",
@@ -383,6 +383,7 @@ fn state() -> Value {
         keys.entry(name.clone()).or_insert_with(|| value.clone());
     }
     let get = |key: &str| settings.get(key).cloned().unwrap_or_default();
+    let desk = desk();
 
     let values: Map<String, Value> = SETTINGS.iter().map(|&k| (k.to_string(), get(k).into())).collect();
     let from_env: Map<String, Value> =
@@ -457,7 +458,7 @@ fn state() -> Value {
             model.is_file(),
             keys.get("ELEVENLABS_API_KEY").is_some_and(|k| !k.is_empty()) || env::var_os("ELEVENLABS_API_KEY").is_some(),
             &access(),
-            typing(),
+            &desk,
         ),
         // the app macOS asks about, when it can be named
         "app": app(),
@@ -468,6 +469,8 @@ fn state() -> Value {
         "trial": trial(),
         "update": update::state(),
         "os": env::consts::OS,
+        // how the text gets in: where it is pasted, the page offers to put the clipboard back
+        "typing": if cfg!(target_os = "macos") { Some("paste") } else { desk.typing },
     })
 }
 
@@ -557,14 +560,34 @@ fn access() -> Access {
 }
 
 /// How this desktop takes the text, where rookey has to ask: Linux asks the compositor.
-/// "wtype", "paste" (GNOME, KDE), or None.
-fn typing() -> Option<&'static str> {
-    #[cfg(target_os = "linux")]
-    return match crate::linux::typing() {
-        crate::linux::Typing::Wtype => Some("wtype"),
-        crate::linux::Typing::Paste => Some("paste"),
-        crate::linux::Typing::None => None,
+#[derive(Default)]
+struct Desk {
+    /// "wtype", "paste" (GNOME, KDE), or None for no Wayland session to ask
+    typing: Option<&'static str>,
+    /// whether /dev/uinput is open to rookey, for the paste keys
+    uinput: bool,
+}
+
+#[cfg(target_os = "linux")]
+fn desk() -> Desk {
+    use crate::linux::Typing;
+    let typing = match crate::linux::typing() {
+        Typing::Wtype => Some("wtype"),
+        Typing::Paste => Some("paste"),
+        Typing::None => None,
     };
+    Desk { typing, uinput: crate::linux::uinput_ok() }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn desk() -> Desk {
+    Desk::default()
+}
+
+/// The command that opens the keyboards and /dev/uinput to this session, where there is one.
+fn access_fix() -> Option<&'static str> {
+    #[cfg(target_os = "linux")]
+    return Some(crate::linux::ACCESS_FIX);
     #[cfg(not(target_os = "linux"))]
     None
 }
@@ -696,7 +719,7 @@ fn checks(
     model_found: bool,
     has_key: bool,
     access: &Access,
-    typing: Option<&str>,
+    desk: &Desk,
 ) -> Vec<Value> {
     let mut checks = Vec::new();
     let mut check = |id: &str, ok: bool, title: &str, missing: &str, fix: Option<String>| {
@@ -730,12 +753,18 @@ fn checks(
     } else {
         check("key", has_key, &t!("check.key.title"), &t!("check.key.missing", engine = engine), None);
     }
-    match typing {
+    match desk.typing {
         Some("wtype") => {
             check("wtype", on_path("wtype"), &t!("check.wtype.title"), &t!("check.wtype.missing"), install("wtype"))
         }
-        // GNOME and KDE keep the virtual keyboard wtype types with to themselves
-        Some(_) => check("typing", false, &t!("check.typing.title"), &t!("check.typing.missing"), None),
+        // GNOME and KDE: pasted, with wl-copy and a virtual keyboard for Shift+Insert
+        Some(_) => {
+            let clip = on_path("wl-copy") && on_path("wl-paste");
+            let (title, missing) = (t!("check.wl-clipboard.title"), t!("check.wl-clipboard.missing"));
+            check("wl-clipboard", clip, &title, &missing, install("wl-clipboard"));
+            let fix = access_fix().map(String::from);
+            check("uinput", desk.uinput, &t!("check.uinput.title"), &t!("check.uinput.missing"), fix);
+        }
         // ponytail: a Linux page with no Wayland session around it can't tell; the hotkey's
         // typing says why itself
         None => {}
@@ -851,7 +880,7 @@ fn packages(tool: &str) -> Option<String> {
     Some(match tool {
         "tesseract" if installer() == Some("sudo pacman -S --needed") => "tesseract tesseract-data-eng".into(),
         "tesseract" if debian => "tesseract-ocr".into(),
-        "wtype" | "grim" | "tesseract" => tool.into(),
+        "wtype" | "grim" | "tesseract" | "wl-clipboard" => tool.into(),
         _ => return None,
     })
 }
@@ -1043,10 +1072,13 @@ fn model(asked: &Value) -> Res<()> {
 /// The hotkey rookey listens for itself: its keys, whether the service runs, and why it
 /// can't here, if it can't.
 fn listening(get: &dyn Fn(&str) -> String) -> Value {
+    let blocked = crate::listen::access();
     json!({
         "chord": get("ROOKEY_HOTKEY"),
         "running": crate::listen::running(),
-        "blocked": crate::listen::access(),
+        "blocked": blocked,
+        // the one command that lets it read them, without logging out
+        "fix": blocked.as_ref().and(access_fix()),
         // while rookey listens, its only bind is the one that keeps the keys from the windows;
         // on macOS Rookey keeps them itself, all but a modifier on its own
         "swallowed": if cfg!(target_os = "macos") {
@@ -1369,7 +1401,7 @@ PATH=/tmp"}"#,
     fn silent_mic_is_its_own_check() {
         let none = |_: &str| String::new();
         let silent = |there: bool, heard| {
-            checks(&none, (there, None), heard, true, true, &Access::default(), None)
+            checks(&none, (there, None), heard, true, true, &Access::default(), &Desk::default())
                 .iter()
                 .any(|c| c["id"] == "mic-silent")
         };
@@ -1383,18 +1415,21 @@ PATH=/tmp"}"#,
     #[test]
     fn typing_rows_follow_the_desktop() {
         let none = |_: &str| String::new();
-        let rows = |typing| -> Vec<(String, bool)> {
-            checks(&none, (true, None), Some(true), true, true, &Access::default(), typing)
+        let rows = |typing, uinput| -> Vec<(String, bool)> {
+            checks(&none, (true, None), Some(true), true, true, &Access::default(), &Desk { typing, uinput })
                 .iter()
                 .map(|c| (c["id"].as_str().unwrap().to_string(), c["ok"] == true))
-                .filter(|(id, _)| id == "wtype" || id == "typing")
+                .filter(|(id, _)| ["wtype", "wl-clipboard", "uinput"].contains(&id.as_str()))
                 .collect()
         };
-        let wtype = rows(Some("wtype"));
+        let wtype = rows(Some("wtype"), false);
         assert!(wtype.len() == 1 && wtype[0].0 == "wtype", "{wtype:?}");
-        // GNOME and KDE: wtype can't type there, so it isn't asked for
-        assert_eq!(rows(Some("paste")), [("typing".to_string(), false)]);
-        assert!(rows(None).is_empty());
+        // GNOME and KDE paste: no wtype, but wl-clipboard and the keys to press
+        let paste: Vec<String> = rows(Some("paste"), false).into_iter().map(|(id, _)| id).collect();
+        assert_eq!(paste, ["wl-clipboard", "uinput"]);
+        assert!(rows(Some("paste"), false).contains(&("uinput".to_string(), false)));
+        assert!(rows(Some("paste"), true).contains(&("uinput".to_string(), true)));
+        assert!(rows(None, false).is_empty());
     }
 
     #[test]
@@ -1456,7 +1491,7 @@ PATH=/tmp"}"#,
         let screen = |k: &str| if k == "ROOKEY_CONTEXT" { "1".to_string() } else { String::new() };
         let denied = Access { mic: Some(false), screen: Some(false), typing: Some(false), automation: Some(false) };
         let ids = |access: &Access, heard| -> Vec<(String, bool)> {
-            checks(&screen, (true, None), heard, true, true, access, None)
+            checks(&screen, (true, None), heard, true, true, access, &Desk::default())
                 .iter()
                 .map(|c| (c["id"].as_str().unwrap().to_string(), c["ok"] == true))
                 .collect()

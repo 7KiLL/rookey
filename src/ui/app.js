@@ -790,7 +790,7 @@ function System() {
         <h3>${t("files.title")}</h3>
         <p class="hint">${() => tx("files", { config: code(ui.s.path), keys: code(ui.s.keys_path) })}</p>
       </div>
-      ${() => (ui.s.os === "macos" ? Clipboard() : "")}
+      ${() => (ui.s.typing === "paste" ? Clipboard() : "")}
 `);
 }
 
@@ -834,7 +834,7 @@ function Sounds() {
     </div>`;
 }
 
-/** macOS types by pasting: whether the clipboard is put back afterwards. On unless 0. */
+/** macOS, GNOME and KDE type by pasting: whether the clipboard is put back afterwards. On unless 0. */
 function Clipboard() {
   return html`
     <div class="sub" id="clipboard-field">
@@ -975,7 +975,8 @@ function Hotkey() {
         ${choice("hotkey-way", "desktop", () => !listening(), t("hotkey.desktop"),
           tx("hotkey.desktop.about", { cmd: code("rookey toggle") }), pickWay)}
       </div>
-      <p class="problem" hidden="${() => !(listening() && ui.s.listen.blocked)}">${() => ui.s.listen.blocked || ""}</p>
+      <p class="problem" hidden="${() => !(ui.s.listen.blocked && (listening() || ui.s.listen.fix))}">${() => (ui.s.listen.fix ? t("listen.blocked") : ui.s.listen.blocked || "")}</p>
+      <span class="with-button" hidden="${() => !ui.s.listen.fix}"><code class="fix">${() => ui.s.listen.fix || ""}</code>${copyButton(() => ui.s.listen.fix)}</span>
 
       <div hidden="${() => !writable() || editing()}">
         <p class="key-line">${() => (set() && !editing() ? summary() : "")}</p>

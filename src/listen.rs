@@ -90,6 +90,11 @@ fn modifier(key: KeyCode) -> Option<&'static str> {
     })
 }
 
+/// The virtual keyboard rookey pastes with on GNOME and KDE (see linux.rs): not one to listen to.
+fn own(device: &evdev::Device) -> bool {
+    device.name() == Some("rookey")
+}
+
 /// Why the keyboards can't be read, if they can't.
 pub fn access() -> Option<String> {
     let readable = fs::read_dir("/dev/input")
@@ -116,7 +121,7 @@ pub fn run() -> Res<()> {
     // keyboards come and go (a wireless one sleeps), so look again every few seconds
     thread::spawn(move || {
         loop {
-            for (path, device) in evdev::enumerate() {
+            for (path, device) in evdev::enumerate().filter(|(_, d)| !own(d)) {
                 if !device.supported_keys().is_some_and(|keys| keys.contains(key)) {
                     continue;
                 }
@@ -151,7 +156,7 @@ pub fn capture(wait: Duration) -> Res<Option<String>> {
         return Err(why.into());
     }
     let (tx, rx) = mpsc::channel();
-    for (_, device) in evdev::enumerate() {
+    for (_, device) in evdev::enumerate().filter(|(_, d)| !own(d)) {
         if device.supported_keys().is_some_and(|keys| keys.contains(KeyCode::KEY_A)) {
             let tx = tx.clone();
             // ends at the first key after this is done, as its send finds nobody listening

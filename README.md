@@ -46,7 +46,7 @@ What else each system needs:
 
 | System | Needs |
 |---|---|
-| Linux | A Wayland desktop and `wtype`, which types the text: niri, Hyprland, sway, COSMIC. GNOME and KDE don't let it type yet, so the text waits in `rookey history` there. For hold to talk, read access to `/dev/input`: the `input` group, or an ACL from your login manager |
+| Linux | A Wayland desktop. niri, Hyprland, sway and COSMIC type with `wtype`; GNOME and KDE paste, with `wl-clipboard` and access to `/dev/uinput`. Hold to talk reads the keyboards. One udev rule allows both for the session at the computer, without logging out: `rookey setup` shows it. The `input` group works too |
 | macOS | Apple silicon. The settings page asks for the microphone, Accessibility (the hotkey and the typing), Automation of System Events (the paste) and, for screen terms, Screen Recording. macOS files them under *Rookey*, the small app rookey runs as, not under your terminal or your hotkey app |
 | Windows | 10 or 11, nothing else. The CUDA build brings its own runtime |
 
@@ -109,7 +109,7 @@ On macOS, bind it in skhd, Raycast or Shortcuts. The recording runs as Rookey, s
 
 ### How the text gets typed
 
-- **Linux**: `wtype`, on the desktops that have the virtual-keyboard protocol it types through: niri, Hyprland, sway, COSMIC. If it can't type, `rookey status` says why.
+- **Linux**: `wtype` on niri, Hyprland, sway and COSMIC, which let it type. GNOME and KDE don't, so there it's pasted like on macOS: `wl-copy` puts the text on the clipboard and the primary selection, and a virtual keyboard presses Shift+Insert, which pastes in terminals too. The clipboard's text is put back 300 ms later (the primary selection keeps the dictation); `ROOKEY_KEEP_CLIPBOARD=0` leaves it. If nothing can be typed, `rookey status` says why.
 - **macOS**: pasted with Cmd+V through System Events, because typing keys mangles anything that isn't ASCII. The clipboard's text is put back 300 ms later (an image or files on it are lost); `ROOKEY_KEEP_CLIPBOARD=0` leaves the typed text on it instead.
 - **Windows**: Unicode key presses. A window running as administrator takes no input from rookey unless rookey runs as administrator too.
 
@@ -155,6 +155,37 @@ The settings page lists any ggml model already on disk as well: its own, and tho
 - Screen terms read by `ocr` stay on this machine until they go to ElevenLabs with the audio. `openai` and `anthropic` get the screenshot itself.
 - The [update check](#updates) asks GitHub for the latest release. It is the only call rookey makes without being asked. Models come from Hugging Face when you pick one.
 - Transcripts, settings and keys stay on disk. A saved key is never sent back to the settings page, only its last four characters.
+
+## Compared
+
+What each one's own site, docs and code said in October 2026.
+
+| | rookey | Wispr Flow | OpenWhispr | Handy |
+|---|---|---|---|---|
+| Price | $0.22 an hour of speech, paid to ElevenLabs; free on your own machine | 2,000 words a week free; Pro $15/mo, $12/mo yearly | free; its cloud $8/mo | free |
+| Open source | Apache-2.0 | no | MIT | MIT |
+| Linux | Wayland | no | X11, Wayland | X11, Wayland |
+| macOS | Apple silicon | yes | yes | yes |
+| Windows | yes | yes | yes | yes |
+| Without internet | yes, with a local model | no | yes | yes |
+| Account | an ElevenLabs key; none on your machine | required, even free | optional | none |
+| Hold to talk | yes | yes | yes | not on Wayland |
+| Words as you talk | on Realtime | no | opt-in preview | with streaming models |
+| Cleans up text | filler words, your own instruction (ElevenLabs) | filler words, formatting | an LLM | filler words, an LLM |
+| Reads the screen | a screenshot: OCR on your machine, or a vision model | app name and screen text, through accessibility | only its assistant | no |
+| Your audio goes to | ElevenLabs, or stays on your machine | its cloud, always | its cloud, your provider, or stays | stays on your machine |
+
+### What a month costs
+
+ElevenLabs charges for the length of the audio: $0.22 an hour, $0.39 on Realtime, about 20% more with your words or screen terms, 30% more with an edit instruction. No subscription, and the first 4.5 hours a month (2.5 on Realtime) are free. A month here is 22 working days, at about 150 words a minute.
+
+| Talking a day | rookey | rookey, Realtime | Wispr Flow Pro |
+|---|---|---|---|
+| 10 minutes, ~1,500 words | $0.81 | $1.43 | $15, or $12 yearly |
+| 30 minutes, ~4,500 words | $2.42 | $4.29 | $15, or $12 yearly |
+| 1 hour, ~9,000 words | $4.84 | $8.58 | $15, or $12 yearly |
+
+rookey's prices are before the free hours. Wispr Flow Pro costs less only past 2.5 hours of talking every working day, 1.4 on Realtime. Its free plan stops at 2,000 words a week, under an hour of talking a month; ElevenLabs' free hours hold about 40,000 words. On your own machine, rookey costs nothing.
 
 ## Settings
 
@@ -210,7 +241,7 @@ Every setting, in the page's order:
 | `ROOKEY_READER` | who reads the screenshot: `ocr` (default, tesseract on this machine), `openai`, `anthropic` |
 | `ROOKEY_READER_MODEL` | the vision model, if not `gpt-6-luna` or `claude-opus-5-5` |
 | `ROOKEY_SCREENSHOT=<command>` | a command that prints the image, instead of `grim` or `screencapture` |
-| `ROOKEY_KEEP_CLIPBOARD=0` | macOS: leave the typed text on the clipboard instead of putting yours back |
+| `ROOKEY_KEEP_CLIPBOARD=0` | macOS, GNOME, KDE: leave the typed text on the clipboard instead of putting yours back |
 | **While you talk** | |
 | `ROOKEY_SOUNDS` | `notes` (default), `rook`, `pencil` |
 | `ROOKEY_SOUND_START`, `_STOP`, `_TYPED`, `_FAILED` | a sound file of your own for that cue |
@@ -306,8 +337,8 @@ On Linux, `journalctl --user -u rookey-listen -f` follows what the hotkey listen
 | It works in the terminal, but nothing comes from the hotkey | The hotkey doesn't see your shell's environment. Move the key into the keys file (`rookey ui` does it). On macOS, check Rookey's permissions on the settings page |
 | "heard no words" | The wrong microphone, or it's muted. On macOS, microphone access may be off for Rookey |
 | It starts and stops at once, or records twice | `rookey listen` and a desktop bind of `rookey toggle` are on the same keys. Set the hotkey in `rookey ui`, which keeps one |
-| The hotkey does nothing on Linux | `rookey listen` can't read `/dev/input`. Join the `input` group (`sudo usermod -aG input $USER`) and log in again |
-| Nothing typed on Linux | `rookey status` says why: `wtype` is missing, the desktop isn't Wayland, or it is GNOME or KDE, which don't let it type yet. `rookey history` has the text |
+| The hotkey does nothing on Linux | `rookey listen` can't read `/dev/input`. Run the command `rookey setup` shows, or join the `input` group (`sudo usermod -aG input $USER`) and log in again |
+| Nothing typed on Linux | `rookey status` says why: `wtype` or `wl-clipboard` is missing, `/dev/uinput` is closed to rookey (GNOME, KDE), or the desktop isn't Wayland. `rookey history` has the text |
 | Slow on `local` | A large model on a CPU build. Pick a smaller model in `rookey setup`, or `elevenlabs-realtime` |
 | Names and jargon come out wrong | Add them to `ROOKEY_WORDS`, or turn on `ROOKEY_CONTEXT=1` |
 
@@ -336,7 +367,7 @@ cargo install --path window               # the settings window (Linux: needs We
 
 ### Uninstall
 
-Turn the hotkey off first: **Stop listening** or **Unbind** on the settings page removes the login service (systemd, the Run key or the launchd agent) and the compositor bind. Then delete `rookey` and `rookey-window` from where the installer put them, the config file, and the data folder ([Settings](#settings)), which holds the models, keys, history and, on macOS, Rookey. On macOS, `~/Library/Caches/rookey` holds the settings window's app.
+Turn the hotkey off first: **Stop listening** or **Unbind** on the settings page removes the login service (systemd, the Run key or the launchd agent) and the compositor bind. Then delete `rookey` and `rookey-window` from where the installer put them, the config file, and the data folder ([Settings](#settings)), which holds the models, keys, history and, on macOS, Rookey. On macOS, `~/Library/Caches/rookey` holds the settings window's app. On Linux, if you ran the access command from `rookey setup`, `sudo rm /etc/udev/rules.d/70-rookey.rules` takes it back.
 
 ## Development
 
