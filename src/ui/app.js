@@ -144,7 +144,7 @@ const engine = () => values().ROOKEY_BACKEND || "local";
 const cloud = () => engine() !== "local";
 const reader = () => (values().ROOKEY_READER in READERS ? values().ROOKEY_READER : "ocr");
 const provider = (id) => ui.s.providers.find((p) => p.id === id);
-const SOUND_SETS = ["rook", "notes", "pencil"]; // sound::SETS, the first is the default
+const SOUND_SETS = ["notes", "rook", "pencil"]; // sound::SETS, the first is the default
 const PILL_STYLES = ["full", "compact", "dot"]; // overlay::STYLES, the first is the default
 // ROOKEY_PILL_AT, in percent of the room the pill has; bottom is overlay::DEFAULT_AT
 const PILL_PLACES = { "top-left": [0, 0], top: [50, 0], "top-right": [100, 0], "bottom-left": [0, 100], bottom: [50, 100], "bottom-right": [100, 100] };
@@ -647,8 +647,10 @@ function Typed() {
     cloud()
       ? tx("sanitize.cloud", { um: code("um"), uh: code("uh"), yk: code("you know") })
       : tx("sanitize.local", { music: code("[music]") });
-  const terms = () =>
-    termsMode() === "command" ? t("terms.command") : t("terms.screen") + (reader() === "ocr" ? t("terms.local") : "");
+  // nothing read, the screen read here or at a provider; a command of your own shows none of them
+  const screen = () => (termsMode() === "off" ? "off" : termsMode() === "command" ? "" : reader());
+  const pickScreen = (id) => () =>
+    save(id === "off" ? { ROOKEY_CONTEXT: "" } : { ROOKEY_CONTEXT: "1", ROOKEY_READER: id === "ocr" ? "" : id });
   const editText = () => ui.edit ?? values().ROOKEY_EDIT;
   // your own text is kept in ROOKEY_EDIT_CUSTOM while a preset or Off is on, and comes back with Custom
   const pickEdit = (id) => async () => {
@@ -670,31 +672,30 @@ function Typed() {
       ${toggle("sanitize", t("sanitize"), sanitize, () => isOn(values().ROOKEY_SANITIZE), (e) =>
         save({ ROOKEY_SANITIZE: e.target.checked ? "1" : "" }))}
       ${shell("ROOKEY_SANITIZE")}
-      ${toggle("terms", t("terms"), terms, () => termsMode() !== "off", (e) => save({ ROOKEY_CONTEXT: e.target.checked ? "1" : "" }))}
-      ${shell("ROOKEY_CONTEXT")}
-      ${ScreenLangs()}
-      <div id="reader-field">${More(t("more.reader"), html`
-        <h3 id="reader-title">${t("reader.title")}</h3>
+      <div class="sub" id="reader-field">
+        <h3 id="reader-title">${t("terms")}</h3>
         <div class="chips" role="radiogroup" aria-labelledby="reader-title">
-          ${Object.entries(READERS).map(([id, r]) =>
-            chip("radio", "reader", id, () => reader() === id, r.name(), () => save({ ROOKEY_READER: id === "ocr" ? "" : id })))}
+          ${["off", ...Object.keys(READERS)].map((id) =>
+            chip("radio", "reader", id, () => screen() === id, id === "off" ? t("reader.off") : READERS[id].name(), pickScreen(id)))}
         </div>
-        <p class="hint">${() => t(`reader.${reader()}.about`)}</p>
+        <p class="hint">${() => (termsMode() === "command" ? t("terms.command") : t(`reader.${screen()}.about`))}</p>
         ${() => {
           const needs = READERS[reader()].provider;
           return needs && termsMode() === "screen" && !hasKey(needs) ? needsKey(needs) : "";
         }}
+        ${shell("ROOKEY_CONTEXT")}
         ${shell("ROOKEY_READER")}
-
+        ${ScreenLangs()}
+        ${More(t("more.command"), html`
         <div class="field">
           <label for="command">${t("command")}</label>
           <input class="typed-input" id="command" type="text" spellcheck="false" autocomplete="off" placeholder="cat ~/.config/rookey/glossary.txt"
             .value="${() => (termsMode() === "command" ? values().ROOKEY_CONTEXT : "")}"
             @change="${(e) => save({ ROOKEY_CONTEXT: e.target.value.trim() || "1" })}">
           <p class="hint">${t("command.hint")}</p>
-        </div>
+        </div>`)}
         <p class="hint" hidden="${() => !cloud() || termsMode() === "off"}">${t("terms.cost")}</p>
-      `)}</div>
+      </div>
 
       ${Words()}
 
@@ -705,10 +706,10 @@ function Typed() {
             chip("radio", "edit-mode", id, () => editMode() === id, t(`edit.${id}`), pickEdit(id), () => !cloud()))}
         </div>
         <p class="hint">${() => t(`edit.${editMode()}.about`)}</p>
-        <div class="field" hidden="${() => editMode() !== "custom"}">
+        <div class="field" hidden="${() => editMode() === "off"}">
           <label class="visually-hidden" for="edit">${t("edit.custom.label")}</label>
           <textarea id="edit" rows="3" maxlength="2000" placeholder="${t("edit.placeholder")}" disabled="${() => !cloud()}"
-            .value="${editText}" @input="${(e) => (ui.edit = e.target.value)}"
+            .value="${editText}" @input="${(e) => ((ui.edit = e.target.value), (ui.editCustom = true))}"
             @change="${async (e) => (ui.editCustom = true) && (await save({ ROOKEY_EDIT: e.target.value, ROOKEY_EDIT_CUSTOM: e.target.value })) && (ui.edit = null)}"></textarea>
         </div>
         <p class="hint" hidden="${() => cloud() && editMode() === "off"}">${() => t(cloud() ? "edit.cloud" : "edit.local")}</p>
@@ -1315,16 +1316,20 @@ function Specimen() {
   const clean = () => cloud() && isOn(values().ROOKEY_SANITIZE);
   const terms = () => termsMode() !== "off";
   const cut = (key) => html`<span class="cut">${t(key)}</span>`;
+  // a preset rewrites the line; Custom can't be guessed, so the line before it shows, then the instruction
+  const rewrite = () => (cloud() && editMode() !== "off" ? editMode() : "");
+  const instruction = () => (ui.edit ?? values().ROOKEY_EDIT).trim();
   const typed = () => {
     const name = terms() ? html`<mark>spawn_model_loader</mark>` : html`<span>spawn model loader</span>`;
-    return tx(clean() ? "typed.clean" : "typed.raw", { name });
+    const preset = rewrite() && rewrite() !== "custom" ? rewrite() : "";
+    return tx(preset ? `typed.${preset}` : clean() ? "typed.clean" : "typed.raw", { name });
   };
   // a new caret, keyed by the line, each time the typed line changes: its blink starts afresh.
   // A redraw with the same line keeps the class it had, so an unrelated change doesn't blink it.
   let shown = null;
   let fresh = false;
   const caret = () => {
-    const line = `${clean()}${terms()}`;
+    const line = `${clean()}${terms()}${rewrite()}`;
     if (shown !== null && line !== shown) fresh = true;
     shown = line;
     return [html`<span class="${fresh ? "caret is-fresh" : "caret"}" aria-hidden="true"></span>`.key(line)];
@@ -1336,9 +1341,10 @@ function Specimen() {
       <p class="label">${t("specimen.say")}</p>
       <p class="said">${cut("said.um")}${t("said.a")}<span class="term">spawn model loader</span>${t("said.b")}${cut("said.the")}${t("said.c")}${cut("said.yk")}${t("said.end")}</p>
 
-      <p class="label">${t("specimen.types")}</p>
+      <p class="label">${t("specimen.types")}<span class="label-tag" hidden="${() => !rewrite()}">${() =>
+        rewrite() ? ` · ${t("specimen.rewritten", { name: t(`edit.${rewrite()}`) })}` : ""}</span></p>
       <p class="typed"><span>${typed}</span>${caret}</p>
-      <p class="then" hidden="${() => !(cloud() && (ui.edit ?? values().ROOKEY_EDIT).trim())}">${t("specimen.then")}</p>
+      <p class="then" hidden="${() => rewrite() !== "custom" || !instruction()}">${() => t("specimen.then", { instruction: instruction() })}</p>
 
       <p class="caption">${t("specimen.caption")}</p>
       ${Trial()}
