@@ -1,71 +1,41 @@
 # rookey: notes for agents
 
-rookey is a dictation CLI in Rust: record the mic, transcribe (local whisper.cpp or ElevenLabs Scribe), print or type the text. `rookey ui` serves a settings page on localhost.
+Dictation CLI in Rust: record the mic, transcribe (whisper.cpp or ElevenLabs Scribe), type the text. `rookey ui` serves a settings page on localhost; `window/` is a separate workspace crate (`rookey-window`) that shows it in a webview.
 
 ## Build and test
 
-```sh
-PATH="/opt/cuda/bin:$PATH" cargo test --release --features cuda   # NVIDIA Linux
-cargo test --release --features metal                              # macOS
-cargo test --release                                               # CPU
-```
+- `just test` (cuda on Linux, metal on macOS, `FEATURES=` for CPU), `cargo test --release -p rookey-window` for the window, and `cargo fmt --all` (CI checks it). Never switch profile or features: whisper.cpp rebuilds from scratch, which takes minutes.
+- Live API tests are `#[ignore]`: `ELEVENLABS_API_KEY=… cargo test --release --features cuda -- --ignored`, plus `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` for the screen readers. Without keys, say which API paths weren't exercised.
+- End to end without a keyboard: `timeout -s INT 3 ./target/release/rookey -vv` records 3 s and transcribes locally.
+- Windows can only be type-checked here (needs `cargo-xwin` and `ninja`): `XWIN_ACCEPT_LICENSE=1 CARGO_TARGET_DIR=<scratch> cargo xwin check --all-targets --target x86_64-pc-windows-msvc`. Say that nothing Windows-only ran.
 
-- Stay on one profile and feature set. Switching (debug, or no `cuda`) rebuilds whisper.cpp from scratch, which takes minutes.
-- Live API tests are `#[ignore]`: `ELEVENLABS_API_KEY=... cargo test --release -- --ignored`, and `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for the screen readers. Without keys, say plainly which API paths were not exercised.
-- A quick end-to-end run without a keyboard: `timeout -s INT 3 ./target/release/rookey -vv` records 3 s and transcribes locally.
-- Windows can't be run here, only type-checked: `cargo install cargo-xwin` and `ninja` on PATH, then `XWIN_ACCEPT_LICENSE=1 CARGO_TARGET_DIR=<scratch> cargo xwin check --all-targets --target x86_64-pc-windows-msvc`. Say plainly that nothing Windows-only was run; the release workflow builds it for real.
+## Rules
 
-## Layout
-
-| File | What it does |
-|---|---|
-| `src/main.rs` | Running the commands, settings (`setting()`), recording, backends (whisper, Scribe batch, Scribe realtime over WebSocket), typing, the move from the old `yap` dirs |
-| `src/cli.rs`, `src/skill.md` | The commands and their help (clap), the settings listed under `--help`, and `rookey skills`: how to work with rookey, for coding agents, baked into the binary. A test fails if it misses a command; update it with any command or setting people use |
-| `src/reader.rs` | Screen terms: screenshot, then local OCR (tesseract) or a vision model (OpenAI, Claude) |
-| `src/models.rs` | Whisper model catalog, finding installed models, downloads |
-| `src/desktop.rs` | Hotkeys: detects niri or Hyprland, edits their config safely, validates with the compositor itself |
-| `src/hold.rs` | Hold to talk, tap to keep talking: the key logic both listeners share |
-| `src/listen.rs`, `src/listen_win.rs`, `src/listen_mac.rs` | `rookey listen`: evdev and a systemd user service on Linux, the key state and the Run key on Windows, a keyboard tap and a launchd agent on macOS. Same functions in all three |
-| `src/status.rs` | What rookey is doing now: the status file every recording writes, and `rookey status [--json\|--waybar] [--follow]` for bars |
-| `src/overlay.rs`, `src/overlay_win.rs` | `rookey overlay`: the pill on screen, drawn into pixels here; layer shell on Wayland, a layered window on Windows. Its fonts in `src/overlay/` are the page's, cut down (see the comment in overlay.rs) |
-| `src/history.rs` | The last transcripts, JSON lines in `<data_dir>/rookey/history`, and `rookey history [--clear]` |
-| `src/sound.rs` | The cues (start, stop, typed, failed): three synthesized sets played through cpal, or a user's file through the system player |
-| `src/update.rs` | `rookey update` and the daily background check: GitHub's latest release, this build's archive, SHA256SUMS, the swap next to the running binary |
-| `src/win.rs` | The Windows calls: typing (SendInput), a key's state, whether a pid runs |
-| `src/mac.rs` | The macOS privacy switches (microphone, screen recording, Accessibility, Automation of System Events), read and asked for, and the keyboard tap. macOS files them under the responsible app: the terminal, the hotkey app, or *Rookey* (`io.github.7kill.rookey`), a copy of rookey in `<data_dir>/rookey/Rookey.app` that `rookey listen` runs from under launchd. The page reads Rookey's switches by running `rookey __access` as Rookey; a switch read in the same process never changes |
-| `install.sh`, `install.ps1` | Install the release build and nothing else; the model is picked in `rookey setup` |
-| `.github/workflows/release.yml`, `cliff.toml` | A `v*` tag builds every archive and writes the notes from Conventional Commits |
-| `window/` | `rookey-window`, a workspace member of its own: the page in a wry webview window. `rookey ui` starts it from beside its binary and falls back to the browser. Only it links WebKitGTK/WebView2, never `rookey`. On macOS it copies itself into `~/Library/Caches/rookey/Rookey Settings.app` and runs from there, for the Dock's name and icon (`window/macos/`); the bundle id `io.github.7kill.rookey.settings` stays fixed. Built and tested apart: `cargo build --release -p rookey-window`, `cargo test --release -p rookey-window` |
-| `src/ui.rs` | The `rookey ui` HTTP server: token, routes, state for the page, input checks, setup checks |
-| `src/i18n.rs`, `locales/`, `build.rs` | rookey's words, one JSON file per language, baked in at build time; `t()` for Rust |
-| `src/ui/` | The page: `app.js` (arrow.js templates), `i18n.js` (loads `/locales.json`), `app.css`, the vendored `arrow.js`, fonts and icon, baked in with `include_bytes!` |
-
-Settings: environment variables win over `<config_dir>/rookey/config` (`KEY=value` lines). API keys live in `<data_dir>/rookey/keys`, mode 0600, never in the config dir: people sync `~/.config` with dotfile managers and publish it.
-
-## Rules that are easy to break
-
-- **Never touch the real config, data or compositor files in a test.** Run the UI on copies: `XDG_CONFIG_HOME=<scratch>/desk XDG_DATA_HOME=<scratch>/data ./target/release/rookey ui --no-open`, with the compositor configs copied into `<scratch>/desk`. After an unbind, `diff -r` against the originals must come out empty.
-- **Keys never reach the browser.** `state()` sends only a mask (`sk_••••••••a1b2`). Keep it that way.
-- **The page server trusts nothing.** Keep the one-time token check, the setting whitelist in `changes()`, the 64 KB request cap and the CSP. Any new setting gets a validation arm in `changes()` and a test.
-- **Compositor edits go through `desktop.rs`.** Only files inside the compositor's own config tree are written. They are validated by the compositor (`niri validate`, `Hyprland --verify-config`) and restored byte for byte on failure. niri allows one `binds {}` per file, so rookey writes its own `rookey.kdl` and includes it. The chord is checked against injection before it is written.
-- **UI assets are compiled in.** Rebuild and restart `rookey ui` after any HTML, CSS or JS change.
-- **Scratch XDG dirs don't isolate systemd.** `rookey listen` and `rookey update` talk to the real user service whatever `XDG_*` says; don't run them in a test without checking what they'd restart.
-- **Don't kill processes with `pkill -f <text>`.** It matches the shell running the command. Keep a pidfile and kill by pid.
+- **Tests never touch the real config, data or compositor files.** Copy the compositor configs into `<scratch>/desk`, then `XDG_CONFIG_HOME=<scratch>/desk XDG_DATA_HOME=<scratch>/data ./target/release/rookey ui --no-open`. After an unbind, `diff -r` against the originals must be empty.
+- **XDG dirs don't isolate systemd.** `rookey listen` and `rookey update` restart the real user service; check before running them.
+- **Kill by pid from a pidfile, never `pkill -f`**: it matches your own shell.
+- **Settings** come from env vars, else `<config_dir>/rookey/config` (`KEY=value`). **API keys** live in `<data_dir>/rookey/keys` (0600), never under the config dir (people publish their dotfiles), and never reach the browser: `state()` sends only a mask.
+- **The page server trusts nothing.** Keep the one-time token, the 64 KB request cap, the CSP and the setting whitelist in `changes()`. A new setting gets a validation arm there and a test.
+- **Compositor edits go through `desktop.rs`**: only inside the compositor's own config tree, chord checked against injection, validated by the compositor (`niri validate`, `Hyprland --verify-config`), restored byte for byte on failure. niri allows one `binds {}` per file, hence the included `rookey.kdl`.
+- **`listen.rs`, `listen_win.rs` and `listen_mac.rs` expose the same functions**; change them together.
+- **Only `rookey-window` links a webview.** The bundle ids `io.github.7kill.rookey` and `….settings` never change: macOS keys its permissions to them.
+- **A new command or setting goes in `src/skill.md`** (a test checks the commands) and in the settings list of `--help` in `cli.rs`.
 - **Don't name other dictation products** in code, docs, commits or UI copy.
 
-## The page
+## The page (`src/ui/`)
 
-- The design is a steno pad. Tokens are in `app.css` `:root`, with a dark set under `prefers-color-scheme` and again under `[data-theme="dark"]` for the page's own switch (`ROOKEY_UI_THEME`, empty follows the system). Commissioner is used for anything spoken or read, Martian Mono for anything typed. The left column holds settings, the right column a live example sentence, split by a red rule.
-- The settings are five sections that fold, in the order of a dictation: Hotkey, Engine and languages, What gets typed, While you talk, System. A shut section shows a line of what is set; which are shut is kept in `ROOKEY_UI_CLOSED`. What few people need goes in a **More** fold inside its own section, not in a section of its own. History sits under the test in the right column.
-- Copy is plain and specific: what happens, what it costs, where things are saved. Errors say what to do next.
-- The page is [arrow.js](https://arrow-js.com/llms.txt) 1.0.6, vendored as one file (`npm pack @arrow-js/core`, `bun build dist/index.mjs --minify --format esm`) because the CSP allows only `'self'`. A slot updates only when it is given a function (`${() => ui.s.x}`); a static read inside a template is drawn once. No direct DOM writes: that is also why the download bar is a native `<progress>` (the CSP blocks `style` attributes).
-- Every word rookey shows is a key in `locales/<id>.json`: the page fetches them as `/locales.json`, Rust reads them through `i18n::t()`, and `build.rs` bakes in every file there, so a new language is one file. English and Ukrainian are kept whole (a test); another language may miss keys, which fall back to English, but may not carry a key or a `{slot}` English lacks. A sentence that counts is an object of plural forms. `ROOKEY_UI_LANG` picks the language, else the system's (`LANG`), else English. Changing it reloads the page.
-- Page preferences go in the config, not `localStorage`: every `rookey ui` run gets a new port, so a new origin with empty storage.
-- Check changes in a real browser at 1440x900 and 390x844, in light and in dark, in both languages.
+- Baked in with `include_bytes!`: rebuild and restart `rookey ui` after any change.
+- [arrow.js](https://arrow-js.com/llms.txt) 1.0.6, vendored because the CSP allows only `'self'` and no `style` attributes. A slot updates only when given a function (`${() => ui.s.x}`); a plain read draws once. No direct DOM writes.
+- Every word shown is a key in `locales/en.json` and `locales/uk.json` (a test keeps both complete); Rust reads them with `i18n::t()`. Format rules: `locales/README.md`.
+- Tokens are in `app.css` `:root`; the dark set is written twice (`prefers-color-scheme` and `[data-theme="dark"]`), change both. Commissioner for text that's read, Martian Mono for text that's typed.
+- A setting few people need goes in its section's **More** fold, never a new section.
+- Page preferences go in the config, not `localStorage`: each run gets a new port, so a new origin.
+- Copy says what happens, what it costs, where it's saved. Errors say what to do next.
+- Check changes in a real browser at 1440x900 and 390x844, light and dark, both languages.
 
 ## Style
 
-- The code comments `ponytail:` on deliberate shortcuts. Each one names the limit and the way up. Keep adding them when you cut a corner on purpose.
-- Every non-trivial branch, parser or security path leaves one small test behind.
-- Commit and pull request titles are Conventional Commits (`feat(ui): …`, `fix: …`). A squash merge makes the PR title the commit, and the release notes (`cliff.toml`) drop any commit that isn't one.
-- Before writing to a changing API (ElevenLabs, OpenAI, Anthropic, niri, Hyprland), read its current docs. Several of them changed in 2025–2026.
+- Mark deliberate shortcuts with a `ponytail:` comment that names the limit and the way up.
+- Every non-trivial branch, parser or security path leaves one small test.
+- Commit and PR titles are Conventional Commits (`feat(ui): …`): PRs are squash-merged, and `cliff.toml` drops anything else from the release notes.
+- Read the current docs before writing to ElevenLabs, OpenAI, Anthropic, niri or Hyprland; several changed in 2025–2026.
