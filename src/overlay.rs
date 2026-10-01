@@ -7,7 +7,7 @@
 
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
-use std::{env, fs};
+use std::fs;
 
 use fontdue::{Font, FontSettings};
 use serde_json::Value;
@@ -84,7 +84,7 @@ pub fn wanted() -> bool {
         return false;
     }
     #[cfg(target_os = "linux")]
-    return env::var_os("WAYLAND_DISPLAY").is_some();
+    return std::env::var_os("WAYLAND_DISPLAY").is_some();
     #[cfg(any(windows, target_os = "macos"))]
     return true;
     // ponytail: no pill on X11; the notification and sounds carry it there
@@ -127,7 +127,7 @@ pub fn run() -> Res {
     #[cfg(target_os = "macos")]
     let done = crate::overlay_mac::run();
     #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
-    let done: Res = Err("the on-screen pill works on Wayland, Windows and macOS; `rookey status --follow` works everywhere".into());
+    let done: Res = Err(crate::t!("overlay.unsupported").into());
     let _ = fs::remove_file(pidfile());
     done
 }
@@ -332,25 +332,13 @@ fn glyph_font(fonts: &[Font], c: char) -> &Font {
     fonts.iter().find(|f| f.lookup_glyph_index(c) != 0).unwrap_or(&fonts[0])
 }
 
-/// The words on the pill, in the page's language setting or else the system's.
+/// The words on the pill, in rookey's language.
 fn say(key: &str, shown: &Value) -> String {
-    let lang = crate::setting("ROOKEY_UI_LANG").or_else(|| env::var("LANG").ok()).unwrap_or_default();
-    let uk = lang.starts_with("uk");
     let n = shown["words"].as_u64().unwrap_or(0);
-    match (key, uk) {
-        ("transcribing", false) => "Transcribing".into(),
-        ("transcribing", true) => "Розпізнаю".into(),
-        ("typed", false) => format!("{n} {}", if n == 1 { "word" } else { "words" }),
-        ("typed", true) => format!("{n} {}", uk_words(n)),
+    match key {
+        "transcribing" => crate::i18n::t("pill.transcribing", &[]),
+        "typed" => crate::i18n::t("pill.typed", &[("n", &n)]),
         _ => String::new(),
-    }
-}
-
-fn uk_words(n: u64) -> &'static str {
-    match (n % 10, n % 100) {
-        (1, r) if r != 11 => "слово",
-        (2..=4, r) if !(12..=14).contains(&r) => "слова",
-        _ => "слів",
     }
 }
 
@@ -462,7 +450,7 @@ mod wayland {
         let (globals, mut queue) = registry_queue_init(&conn)?;
         let qh = queue.handle();
         let compositor = CompositorState::bind(&globals, &qh)?;
-        let layer_shell = LayerShell::bind(&globals, &qh).map_err(|_| "this compositor has no layer shell")?;
+        let layer_shell = LayerShell::bind(&globals, &qh).map_err(|_| crate::t!("overlay.no-layer-shell"))?;
         let shm = Shm::bind(&globals, &qh)?;
 
         let surface = compositor.create_surface(&qh);
@@ -696,6 +684,5 @@ mod tests {
         let (cut, w) = fit(&*WORDS, &"ElevenLabs has no key ".repeat(20), 13.0, 200.0);
         assert!(cut.ends_with('…') && w <= 200.0);
         assert_eq!(fit(&*WORDS, "12 words", 13.0, 200.0).0, "12 words");
-        assert_eq!((uk_words(1), uk_words(3), uk_words(11), uk_words(22), uk_words(25)), ("слово", "слова", "слів", "слова", "слів"));
     }
 }

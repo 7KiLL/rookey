@@ -117,7 +117,7 @@ pub fn tap(on: impl FnMut(Key) -> bool + 'static) -> Res<()> {
     let user = Box::into_raw(Box::new(Box::new(on) as OnKey)) as *mut c_void;
     let tap = unsafe { CGEventTapCreate(SESSION, HEAD, ACTIVE, mask, on_event, user) };
     if tap.is_null() {
-        return Err("macOS doesn't let Rookey see the keys: allow it under Privacy & Security > Accessibility".into());
+        return Err(crate::t!("mac.no-keys").into());
     }
     TAP.store(tap, std::sync::atomic::Ordering::Relaxed);
     unsafe {
@@ -287,7 +287,7 @@ pub fn is_app() -> bool {
 /// Puts Rookey together from `from` (a rookey binary), or brings its copy up to date. Written
 /// only when something changed, so an app that runs from it keeps running the same file.
 pub fn place_app(from: &Path) -> Res<PathBuf> {
-    let app = app().ok_or("no data directory for Rookey")?;
+    let app = app().ok_or_else(|| crate::t!("mac.no-data-dir"))?;
     let contents = app.join("Contents");
     fs::create_dir_all(contents.join("MacOS"))?;
     fs::create_dir_all(contents.join("Resources"))?;
@@ -366,7 +366,7 @@ pub fn as_app(args: &[&str], wait: Option<Duration>) -> Res<String> {
     let done = (|| -> Res<String> {
         let status = open.arg("--env").arg(format!("{ANSWER}={}", reply.display())).arg("--stderr").arg(&err).arg(&app).arg("--args").args(args).status()?;
         if !status.success() {
-            return Err("Rookey didn't start".into());
+            return Err(crate::t!("mac.no-start").into());
         }
         let until = Instant::now() + wait;
         while Instant::now() < until {
@@ -376,7 +376,7 @@ pub fn as_app(args: &[&str], wait: Option<Duration>) -> Res<String> {
             std::thread::sleep(Duration::from_millis(20));
         }
         let why = fs::read_to_string(&err).unwrap_or_default();
-        Err(format!("Rookey didn't answer ({})", why.trim()).into())
+        Err(crate::t!("mac.no-answer", why = why.trim()).into())
     })();
     let _ = fs::remove_dir_all(&dir);
     done
@@ -435,7 +435,7 @@ pub fn relaunch(args: &[String], wait: bool) -> Res<()> {
         let _ = fs::remove_file(file);
     }
     if !status.success() {
-        return Err(format!("couldn't start Rookey ({}); ROOKEY_IN_TERMINAL=1 runs it here instead", app.display()).into());
+        return Err(crate::t!("mac.relaunch", path = app.display()).into());
     }
     Ok(())
 }

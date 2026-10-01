@@ -46,6 +46,7 @@ macro_rules! vlog {
 mod cli;
 mod desktop;
 mod history;
+mod i18n;
 #[cfg(target_os = "macos")]
 mod mac;
 mod hold;
@@ -158,10 +159,10 @@ fn move_from_yap() {
             continue;
         }
         if let Err(e) = fs::rename(&old, &new) {
-            eprintln!("rookey: couldn't move {} to {}: {e}", old.display(), new.display());
+            eprintln!("{}", t!("cli.moved-failed", old = old.display(), new = new.display(), why = e));
             continue;
         }
-        eprintln!("rookey: moved {} to {}", old.display(), new.display());
+        eprintln!("{}", t!("cli.moved", old = old.display(), new = new.display()));
         for file in [new.join("config"), new.join("keys")] {
             let Ok(text) = fs::read_to_string(&file) else { continue };
             let renamed = without_yap_names(&text);
@@ -177,7 +178,7 @@ fn move_from_yap() {
             });
             if let Err(e) = done {
                 let _ = fs::remove_file(&tmp);
-                eprintln!("rookey: {} still uses YAP_ names: {e}", file.display());
+                eprintln!("{}", t!("cli.yap-names", file = file.display(), why = e));
             }
         }
     }
@@ -206,7 +207,7 @@ fn load_config() {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 vlog!(2, "config: none at {}", path.display())
             }
-            Err(e) => eprintln!("rookey: config {}: {e}", path.display()),
+            Err(e) => eprintln!("{}", t!("cli.config-unreadable", path = path.display(), why = e)),
         }
     }
     *CONFIG.write().unwrap() = all;
@@ -224,7 +225,7 @@ fn parse_config(text: &str) -> HashMap<String, String> {
         }
         let Some((key, value)) = line.split_once('=') else {
             // not echoing the line: it may be a pasted secret
-            eprintln!("rookey: config line {}: expected KEY=value, ignored", n + 1);
+            eprintln!("{}", t!("cli.config-line", n = n + 1));
             continue;
         };
         let value = value.trim();
@@ -274,7 +275,7 @@ fn cli() -> Res<()> {
         #[cfg(target_os = "macos")]
         Some(Cmd::RestartListen) => return listen::restart(&exe()?).map(drop),
         #[cfg(not(target_os = "macos"))]
-        Some(Cmd::Access | Cmd::Ask { .. } | Cmd::Capture { .. } | Cmd::RestartListen) => return Err("that one is for macOS".into()),
+        Some(Cmd::Access | Cmd::Ask { .. } | Cmd::Capture { .. } | Cmd::RestartListen) => return Err(t!("cli.macos-only").into()),
     }
     // Rookey opened by itself (a double-click, or macOS reopening it after a permission
     // changed) has nothing to record for: it shows the settings instead
@@ -356,7 +357,7 @@ fn cli() -> Res<()> {
     }
     let done = text.and_then(|text| {
         if text.trim().is_empty() {
-            return Err("heard no words".into());
+            return Err(t!("cli.no-words").into());
         }
         // kept before it is typed: typed into the wrong window, or not at all, it is still here
         history::save(&text);
@@ -411,10 +412,7 @@ fn run(mode: Mode, stop_rx: mpsc::Receiver<()>) -> Res<String> {
         Some("elevenlabs") => Backend::ElevenLabs,
         Some("elevenlabs-realtime") => Backend::Realtime(None),
         Some(b) => {
-            return Err(format!(
-                "unknown ROOKEY_BACKEND {b:?} (local, elevenlabs, elevenlabs-realtime)"
-            )
-            .into());
+            return Err(t!("cli.unknown-backend", name = b).into());
         }
     };
     // Verbose logs every partial as its own line instead of rewriting one.
@@ -477,7 +475,7 @@ fn spawn_context() -> Option<Context> {
         };
         // Whatever goes wrong here costs the key terms, never the dictation.
         read.unwrap_or_else(|e| {
-            eprintln!("rookey: no screen terms this time: {e}");
+            eprintln!("{}", t!("cli.no-terms", why = e));
             Default::default()
         })
     }))
@@ -597,11 +595,7 @@ fn spawn_model_loader() -> Res<Loader> {
     });
     if !model.exists() {
         // nothing is downloaded behind anyone's back: the model is picked, or skipped, in setup
-        return Err(format!(
-            "no speech model at {}\nrun `rookey setup` to download one, or to use ElevenLabs instead",
-            model.display()
-        )
-        .into());
+        return Err(t!("cli.no-model", path = model.display()).into());
     }
     whisper_rs::install_logging_hooks(); // silences whisper.cpp stderr spam
     vlog!(2, "whisper: loading {} in background", model.display());
@@ -613,7 +607,7 @@ fn spawn_model_loader() -> Res<Loader> {
 }
 
 fn elevenlabs_key() -> Res<String> {
-    Ok(setting("ELEVENLABS_API_KEY").ok_or("ElevenLabs backends need ELEVENLABS_API_KEY")?)
+    Ok(setting("ELEVENLABS_API_KEY").ok_or_else(|| t!("cli.elevenlabs-key"))?)
 }
 
 /// The languages in ROOKEY_LANG ("en" or "en,uk"); none means any.
@@ -684,12 +678,10 @@ impl Realtime {
         let mut req = url.into_client_request()?;
         req.headers_mut().insert("xi-api-key", elevenlabs_key()?.parse()?);
         let (ws, res) = tungstenite::connect(req).map_err(|e| match e {
-            tungstenite::Error::Http(res) => format!(
-                "elevenlabs realtime {}: {}",
-                res.status(),
-                String::from_utf8_lossy(res.body().as_deref().unwrap_or_default())
-            )
-            .into(),
+            tungstenite::Error::Http(res) => {
+                let what = format!("{} {}", res.status(), String::from_utf8_lossy(res.body().as_deref().unwrap_or_default()));
+                t!("cli.elevenlabs", what = what).into()
+            }
             e => Box::<dyn std::error::Error>::from(e),
         })?;
         vlog!(2, "ws: handshake done (HTTP {}), waiting for session_started", res.status());
@@ -698,9 +690,9 @@ impl Realtime {
 
         // The server opens with session_started; anything else (bad key, quota) is an error.
         rt.set_read_timeout(Duration::from_secs(10))?;
-        let first = rt.next()?.ok_or("elevenlabs realtime: no session_started")?;
+        let first = rt.next()?.ok_or_else(|| t!("cli.elevenlabs-no-session"))?;
         if first["message_type"] != "session_started" {
-            return Err(format!("elevenlabs realtime: {first}").into());
+            return Err(t!("cli.elevenlabs", what = first).into());
         }
         vlog!(2, "<- session_started {}", first["session_id"]);
         vlog!(3, "   config {}", first["config"]);
@@ -754,7 +746,7 @@ impl Realtime {
             if self.committed.trim().is_empty() {
                 return Err(e);
             }
-            eprintln!("rookey: {e}; using the transcript as it is");
+            eprintln!("{}", t!("cli.edit-skipped", why = e));
         }
         vlog!(2, "commit round-trip {} ms", t.elapsed().as_millis());
         let _ = self.ws.close(None);
@@ -768,7 +760,7 @@ impl Realtime {
 
     fn wait_final(&mut self, show_partials: bool) -> Res<()> {
         loop {
-            let msg = self.next()?.ok_or("elevenlabs realtime: timed out waiting for transcript")?;
+            let msg = self.next()?.ok_or_else(|| t!("cli.elevenlabs-timeout"))?;
             if self.handle(msg, show_partials)? {
                 return Ok(());
             }
@@ -801,9 +793,9 @@ impl Realtime {
                 return Ok(true);
             }
             t if t.contains("error") || msg.get("error").is_some() => {
-                return Err(format!("elevenlabs realtime: {msg}").into());
+                return Err(t!("cli.elevenlabs", what = msg).into());
             }
-            _ => eprintln!("elevenlabs realtime: unexpected {msg}"),
+            _ => eprintln!("{}", t!("cli.elevenlabs-unexpected", what = msg)),
         }
         Ok(false)
     }
@@ -813,7 +805,7 @@ impl Realtime {
         use std::io::ErrorKind::{TimedOut, WouldBlock};
         match self.ws.read() {
             Ok(tungstenite::Message::Text(t)) => Ok(Some(serde_json::from_str(&t)?)),
-            Ok(tungstenite::Message::Close(f)) => Err(format!("elevenlabs realtime closed: {f:?}").into()),
+            Ok(tungstenite::Message::Close(f)) => Err(t!("cli.elevenlabs", what = format!("closed {f:?}")).into()),
             Ok(_) => Ok(None), // ping/pong, answered by tungstenite
             Err(tungstenite::Error::Io(e)) if matches!(e.kind(), WouldBlock | TimedOut) => Ok(None),
             Err(e) => Err(e.into()),
@@ -866,13 +858,13 @@ fn elevenlabs(audio: &[f32], terms: &[String]) -> Res<String> {
     let body = res.body_mut().read_to_string()?;
     vlog!(2, "http: {} in {} ms", res.status(), t.elapsed().as_millis());
     if !res.status().is_success() {
-        return Err(format!("elevenlabs {}: {body}", res.status()).into());
+        return Err(t!("cli.elevenlabs", what = format!("{} {body}", res.status())).into());
     }
     let json: serde_json::Value = serde_json::from_str(&body)?;
     // The edit comes next to the raw text; a failed one has a message and no edited_text.
     let edited = &json["edited_transcript"];
     if let Some(e) = edited["message"].as_str().filter(|_| edited["edited_text"].is_null()) {
-        eprintln!("rookey: transcript edit failed: {e}; using the transcript as it is");
+        eprintln!("{}", t!("cli.edit-skipped", why = e));
     }
     let text = edited["edited_text"].as_str().or(json["text"].as_str());
     Ok(text.unwrap_or_default().trim().to_string())
@@ -912,7 +904,7 @@ fn record_until(
     let (stream, rate) = open_mic(buf.clone())?;
     notify(mode, "recording");
     if mode != Mode::Page {
-        eprintln!("recording... (Enter to stop)");
+        eprintln!("{}", t!("cli.recording"));
     }
     let mut sent = 0;
     while let Err(mpsc::RecvTimeoutError::Timeout) = stop.recv_timeout(Duration::from_millis(250)) {
@@ -929,7 +921,7 @@ fn record_until(
 
     let samples = std::mem::take(&mut *buf.lock().unwrap());
     if silent(&samples, rate) {
-        return Err(SILENT.into());
+        return Err(t!("cli.silent").into());
     }
     tick(&samples[sent..], rate, true)?;
     vlog!(2, "recorded {:.2} s total", samples.len() as f64 / rate as f64);
@@ -939,7 +931,7 @@ fn record_until(
 /// Opens the default input and starts it, every sample going into `buf` as mono.
 /// Opening it is also what asks for access, where the system asks (macOS, Windows).
 fn open_mic(buf: Arc<Mutex<Vec<f32>>>) -> Res<(cpal::Stream, u32)> {
-    let device = cpal::default_host().default_input_device().ok_or("no input device")?;
+    let device = cpal::default_host().default_input_device().ok_or_else(|| t!("cli.no-mic"))?;
     let config = device.default_input_config()?;
     let rate = config.sample_rate();
     vlog!(
@@ -954,7 +946,7 @@ fn open_mic(buf: Arc<Mutex<Vec<f32>>>) -> Res<(cpal::Stream, u32)> {
         cpal::SampleFormat::F32 => build::<f32>(&device, config.into(), buf),
         cpal::SampleFormat::I16 => build::<i16>(&device, config.into(), buf),
         cpal::SampleFormat::I32 => build::<i32>(&device, config.into(), buf),
-        f => return Err(format!("unsupported sample format {f:?}").into()),
+        f => return Err(t!("cli.sample-format", format = format!("{f:?}")).into()),
     }?;
     stream.play()?;
     Ok((stream, rate))
@@ -974,7 +966,6 @@ pub fn mic_hears(time: Duration) -> Res<bool> {
 const SILENCE: f32 = 1e-4;
 
 /// Kept short: the pill shows one line.
-const SILENT: &str = "mic is silent: is it on, unmuted and the default input?";
 
 /// Half a second or more of dead zeros: a headset that is off but whose dongle is plugged
 /// in, a muted source. A real mic in a quiet room still hears its own noise floor.
@@ -1014,7 +1005,7 @@ fn audio_error(e: cpal::Error) {
     if e.kind() == cpal::ErrorKind::Xrun {
         vlog!(2, "audio: {e}");
     } else {
-        eprintln!("audio error: {e}");
+        eprintln!("{}", t!("cli.audio-error", why = e));
     }
 }
 
@@ -1115,12 +1106,8 @@ fn type_text(text: &str) -> Res<()> {
         if !pasted.status.success() {
             // the text stays on the clipboard, so it can still be pasted by hand
             let why = String::from_utf8_lossy(&pasted.stderr);
-            return Err(format!(
-                "macOS didn't let rookey type ({}): allow {} under Privacy & Security > Accessibility and > Automation",
-                why.trim(),
-                if mac::is_app() { "Rookey" } else { "the app that started it" }
-            )
-            .into());
+            let who = if mac::is_app() { "Rookey".to_string() } else { t!("cli.mac-starter") };
+            return Err(t!("cli.mac-no-typing", why = why.trim(), who = who).into());
         }
         if let Some(saved) = saved {
             // ponytail: the app reads the paste after the keystroke returns, on its own time;
@@ -1159,11 +1146,11 @@ fn notify(mode: Mode, msg: &str) {
     }
     #[cfg(target_os = "macos")]
     let _ = Command::new("osascript")
-        .args(["-e", &format!(r#"display notification "{msg}" with title "rookey""#)])
+        .args(["-e", &format!(r#"display notification "{}" with title "rookey""#, t!(&format!("notify.{msg}")).replace('"', "'"))])
         .status();
     // ponytail: no toast on Windows, the sounds say it; a toast needs an app id registered first
     #[cfg(not(any(target_os = "macos", windows)))]
-    let _ = Command::new("notify-send").args(["-t", "1500", "rookey", msg]).status();
+    let _ = Command::new("notify-send").args(["-t", "1500", "rookey", &t!(&format!("notify.{msg}"))]).status();
 }
 
 #[cfg(test)]

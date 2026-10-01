@@ -18,7 +18,7 @@ use std::{env, fs, thread};
 
 use serde_json::{Value, json};
 
-use crate::Res;
+use crate::{Res, t};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const API: &str = "https://api.github.com/repos/7KiLL/rookey/releases/latest";
@@ -119,16 +119,16 @@ struct Release {
 /// Picks this build's archive and the checksums out of GitHub's answer.
 fn release(answer: &Value, asset: &str) -> Res<Release> {
     if answer["draft"] == true || answer["prerelease"] == true {
-        return Err("The latest release is not a finished one.".into());
+        return Err(t!("update.not-final").into());
     }
     let tag = answer["tag_name"].as_str().unwrap_or_default();
-    let version = version(tag).ok_or_else(|| format!("The latest release is tagged {tag:?}, not a version."))?;
+    let version = version(tag).ok_or_else(|| t!("update.bad-tag", tag = format!("{tag:?}")))?;
     let url = |name: &str| {
         answer["assets"].as_array()?.iter().find(|a| a["name"] == name)?["browser_download_url"].as_str().map(str::to_string)
     };
     Ok(Release {
         version: format!("{}.{}.{}", version.0, version.1, version.2),
-        archive: url(asset).ok_or_else(|| format!("Release {tag} has no {asset}."))?,
+        archive: url(asset).ok_or_else(|| t!("update.no-asset", tag = tag, asset = asset))?,
         sums: url(SUMS),
     })
 }
@@ -145,9 +145,9 @@ fn sum_for(sums: &str, name: &str) -> Option<String> {
 
 /// Whether what came down is what the release says it published.
 fn verify(sums: &str, asset: &str, got: &str) -> Res<()> {
-    let want = sum_for(sums, asset).ok_or(format!("{SUMS} has no line for {asset}. Not installing it."))?;
+    let want = sum_for(sums, asset).ok_or_else(|| t!("update.no-sum", sums = SUMS, asset = asset))?;
     if got != want {
-        return Err(format!("{asset} doesn't match its checksum ({got}, expected {want}). Not installing it.").into());
+        return Err(t!("update.bad-sum", asset = asset, got = got, want = want).into());
     }
     Ok(())
 }
@@ -182,12 +182,11 @@ fn managed(path: &Path) -> Option<&'static str> {
 }
 
 /// Words for `managed`, for the terminal.
-fn managed_words(who: &str) -> &'static str {
+fn managed_words(who: &str) -> String {
     match who {
-        "homebrew" => "Homebrew",
-        "nix" => "Nix",
-        "cargo" => "cargo (installed with cargo, or a build of your own)",
-        _ => "your package manager or installer",
+        "homebrew" | "nix" => t!(&format!("update.by.{who}")),
+        "cargo" => t!("update.by.cargo.long"),
+        _ => t!("update.by.package"),
     }
 }
 
@@ -252,7 +251,7 @@ pub fn state() -> Value {
 
 /// Asks GitHub for the latest release, and remembers what it said.
 fn check() -> Res<Release> {
-    let asset = ASSET.ok_or("There is no release build for this system. Build a new one from source.")?;
+    let asset = ASSET.ok_or_else(|| t!("update.unsupported"))?;
     let t = Instant::now();
     let mut res = ureq::get(api())
         .header("Accept", "application/vnd.github+json")
@@ -261,7 +260,7 @@ fn check() -> Res<Release> {
         .timeout_global(Some(Duration::from_secs(20)))
         .build()
         .call()
-        .map_err(|e| format!("Can't reach GitHub to check for updates: {e}. Check the connection and try again."))?;
+        .map_err(|e| t!("update.no-github", why = e))?;
     let answer: Value = serde_json::from_str(&res.body_mut().read_to_string()?)?;
     vlog!(2, "update: asked {} in {} ms", api(), t.elapsed().as_millis());
     let found = release(&answer, asset)?;
@@ -315,7 +314,7 @@ pub fn in_background(keep_going: bool) {
                 remember(last().1.as_deref()); // taken, before the network: two starts check once
                 let auto = auto();
                 match run_once(auto) {
-                    Ok(Some((found, true))) => eprintln!("rookey: installed {}, used from the next start", found.version),
+                    Ok(Some((found, true))) => eprintln!("{}", t!("update.installed-bg", version = found.version)),
                     Ok(_) => {}
                     Err(e) => {
                         vlog!(2, "update: {e}");
@@ -335,20 +334,20 @@ pub fn in_background(keep_going: bool) {
 pub fn run(install: bool) -> Res<()> {
     let (exe, who) = here()?;
     match attempt(install)? {
-        None => println!("rookey {} is the latest.", current()),
+        None => println!("{}", t!("update.latest", version = current())),
         Some((found, true)) => {
-            println!("installed rookey {} at {}; it is used from the next start.", found.version, crate::ui::tilde(&exe));
+            println!("{}", t!("update.installed-at", version = found.version, path = crate::ui::tilde(&exe)));
             match crate::listen::restart(&crate::installed()?) {
-                Ok(true) => println!("restarted the hotkey listener on it."),
+                Ok(true) => println!("{}", t!("update.listener-restarted")),
                 Ok(false) => {}
-                Err(e) => eprintln!("rookey: the hotkey listener picks it up on its next start ({e})"),
+                Err(e) => eprintln!("{}", t!("update.listener-later", why = e)),
             }
         }
         Some((found, false)) => {
-            println!("rookey {} is out, this is {}.", found.version, current());
+            println!("{}", t!("update.is-out", version = found.version, current = current()));
             match who {
-                Some(who) => println!("{} came from {}: update it there.", crate::ui::tilde(&exe), managed_words(who)),
-                None => println!("run `rookey update` to install it."),
+                Some(who) => println!("{}", t!("update.came-from", path = crate::ui::tilde(&exe), who = managed_words(who))),
+                None => println!("{}", t!("update.run-update")),
             }
         }
     }
@@ -359,22 +358,19 @@ pub fn run(install: bool) -> Res<()> {
 fn install_release(found: &Release) -> Res<()> {
     let (exe, who) = here()?;
     if let Some(who) = who {
-        return Err(format!("{} came from {}: update it there.", crate::ui::tilde(&exe), managed_words(who)).into());
+        return Err(t!("update.came-from", path = crate::ui::tilde(&exe), who = managed_words(who)).into());
     }
-    let dir = exe.parent().ok_or("rookey has no folder")?;
+    let dir = exe.parent().ok_or_else(|| t!("update.no-folder"))?;
     // next to the binary, so the files are renamed into place, never copied
     let work = dir.join(format!(".rookey-update-{}", std::process::id()));
     fs::create_dir_all(&work).map_err(|e| {
-        format!("Can't write to {} ({e}), so rookey can't update itself there. Install it again with the install script.", crate::ui::tilde(dir))
+        t!("update.cant-write", path = crate::ui::tilde(dir), why = e)
     })?;
     let done = (|| -> Res<()> {
-        let asset = ASSET.ok_or("There is no release build for this system.")?;
-        let sums_url = found.sums.as_deref().ok_or(format!(
-            "Release {} has no {SUMS}, so its download can't be checked. Not installing it.",
-            found.version
-        ))?;
+        let asset = ASSET.ok_or_else(|| t!("update.unsupported"))?;
+        let sums_url = found.sums.as_deref().ok_or_else(|| t!("update.no-sums", version = found.version, sums = SUMS))?;
         let sums = get(sums_url)?.body_mut().read_to_string()?;
-        sum_for(&sums, asset).ok_or(format!("{SUMS} has no line for {asset}. Not installing it."))?; // before the download
+        sum_for(&sums, asset).ok_or_else(|| t!("update.no-sum", sums = SUMS, asset = asset))?; // before the download
         let archive = work.join(asset);
         verify(&sums, asset, &download(&found.archive, &archive)?)?;
         let out = work.join("out");
@@ -434,9 +430,9 @@ fn unpack(archive: &Path, into: &Path) -> Res<()> {
     let mut cmd = Command::new(tar);
     cmd.arg("-xf").arg(archive).arg("-C").arg(into).stdin(Stdio::null());
     crate::no_window(&mut cmd);
-    let out = cmd.output().map_err(|e| format!("Can't run tar to unpack the update: {e}"))?;
+    let out = cmd.output().map_err(|e| t!("update.no-tar", why = e))?;
     if !out.status.success() {
-        return Err(format!("tar couldn't unpack the update: {}", String::from_utf8_lossy(&out.stderr).trim()).into());
+        return Err(t!("update.tar-failed", why = String::from_utf8_lossy(&out.stderr).trim()).into());
     }
     Ok(())
 }
@@ -448,7 +444,7 @@ fn says_version(exe: &Path, version: &str) -> Res<()> {
     let mut cmd = Command::new(exe);
     cmd.arg("--version").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     crate::no_window(&mut cmd);
-    let mut child = cmd.spawn().map_err(|e| format!("The downloaded rookey doesn't start: {e}. Not installing it."))?;
+    let mut child = cmd.spawn().map_err(|e| t!("update.wont-start", why = e))?;
     let until = Instant::now() + Duration::from_secs(10);
     let status = loop {
         if let Some(status) = child.try_wait()? {
@@ -456,7 +452,7 @@ fn says_version(exe: &Path, version: &str) -> Res<()> {
         }
         if Instant::now() > until {
             let _ = child.kill();
-            return Err("The downloaded rookey didn't answer --version. Not installing it.".into());
+            return Err(t!("update.no-version").into());
         }
         thread::sleep(Duration::from_millis(50));
     };
@@ -464,7 +460,7 @@ fn says_version(exe: &Path, version: &str) -> Res<()> {
     child.stdout.take().map(|mut o| o.read_to_string(&mut said));
     let want = format!("rookey {version}");
     if !status.success() || said.trim() != want {
-        return Err(format!("The downloaded rookey says {:?}, not {want:?}. Not installing it.", said.trim()).into());
+        return Err(t!("update.wrong-version", said = format!("{:?}", said.trim()), want = format!("{want:?}")).into());
     }
     Ok(())
 }
@@ -495,7 +491,7 @@ fn put_in_place(from: &Path, to: &Path, exe: &Path, aside: bool) -> Res<()> {
         files.push((entry.path(), target));
     }
     if !files.iter().any(|(new, _)| new.file_name().is_some_and(|n| n == "rookey" || n == "rookey.exe")) {
-        return Err("The update has no rookey in it. Not installing it.".into());
+        return Err(t!("update.empty").into());
     }
     let mut moved: Vec<(&PathBuf, &PathBuf, Option<PathBuf>)> = Vec::new();
     let done = (|| -> std::io::Result<()> {
@@ -525,7 +521,7 @@ fn put_in_place(from: &Path, to: &Path, exe: &Path, aside: bool) -> Res<()> {
                 let _ = fs::rename(old, target);
             }
         }
-        return Err(format!("Couldn't put the new files in {}: {e}", crate::ui::tilde(to)).into());
+        return Err(t!("update.cant-put", path = crate::ui::tilde(to), why = e).into());
     }
     Ok(())
 }

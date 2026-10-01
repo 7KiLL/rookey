@@ -70,7 +70,7 @@ pub fn toggle() {
     match cmd.spawn() {
         // reaped by a thread of its own, so none are left as zombies
         Ok(mut child) => drop(thread::spawn(move || child.wait())),
-        Err(e) => eprintln!("rookey listen: couldn't start rookey toggle: {e}"),
+        Err(e) => eprintln!("{}", crate::t!("listen.toggle-failed", why = e)),
     }
 }
 

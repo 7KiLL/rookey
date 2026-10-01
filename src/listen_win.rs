@@ -10,7 +10,7 @@ use std::{fs, thread};
 
 use windows_sys::Win32::System::Console::FreeConsole;
 
-use crate::Res;
+use crate::{Res, t};
 use crate::desktop::Chord;
 use crate::hold::{Hold, recording, toggle};
 use crate::win;
@@ -122,10 +122,10 @@ fn watch(keys: &[u16], mut on: impl FnMut(u16, i32) -> bool) {
 }
 
 pub fn run() -> Res<()> {
-    let chord = crate::setting("ROOKEY_HOTKEY").ok_or("no ROOKEY_HOTKEY set, pick the keys in `rookey ui`")?;
+    let chord = crate::setting("ROOKEY_HOTKEY").ok_or_else(|| t!("listen.no-hotkey"))?;
     let chord = Chord::parse(&chord)?;
-    let key = key_code(chord.key()).ok_or_else(|| format!("rookey can't listen for {}, that key has no known code", chord.key()))?;
-    eprintln!("rookey listen: hold {chord} to talk, tap it to keep talking");
+    let key = key_code(chord.key()).ok_or_else(|| t!("server.key-unknown", key = chord.key()))?;
+    eprintln!("{}", t!("listen.started", chord = chord));
     fs::write(pidfile(), std::process::id().to_string())?;
     // started from the Run key it got a console window of its own, which this closes
     unsafe { FreeConsole() };
@@ -191,7 +191,7 @@ fn reg(args: &[&str]) -> Res<()> {
     crate::no_window(&mut cmd);
     let out = cmd.output()?;
     if !out.status.success() {
-        return Err(format!("reg {} failed: {}", args[0], String::from_utf8_lossy(&out.stderr).trim()).into());
+        return Err(t!("listen.tool-failed", tool = format!("reg {}", args[0]), why = String::from_utf8_lossy(&out.stderr).trim()).into());
     }
     Ok(())
 }

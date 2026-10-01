@@ -82,6 +82,7 @@ nav .extra { display: none; }
 .rec::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--red); animation: blink 1.4s ease-in-out infinite; }
 @keyframes blink { 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .rec::before { animation: none; } }
+.win-logo { width: 0.85em; height: 0.85em; margin-right: 0.35em; vertical-align: -0.05em; fill: currentColor; }
 kbd { font-size: 12px; padding: 4px 8px; border: 1px solid var(--ink); border-radius: 6px; box-shadow: 0 2px 0 var(--ink); background: var(--raised); color: var(--ink); white-space: nowrap; }
 .pad-cols { display: grid; }
 @media (min-width: 600px) { .pad-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -456,6 +457,10 @@ if (os) {
   document.querySelector("#others").textContent =
     Object.keys(names).filter((k) => k !== os).map((k) => names[k]).join(", ") + ", or build it yourself";
 }
+// the same key, as the visitor's keyboard names it
+// Windows' logo is from Simple Icons (icons/windows.svg)
+const mod = { mac: "⌘ Cmd", win: '<svg class="win-logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M0,0H11.377V11.372H0ZM12.623,0H24V11.372H12.623ZM0,12.623H11.377V24H0Zm12.623,0H24V24H12.623"/></svg>Win' }[os];
+if (mod) document.querySelectorAll("kbd").forEach((k) => k.textContent === "Super" && (k.innerHTML = mod));
 
 const tabs = [...document.querySelectorAll('[role="tab"]')];
 function pick(tab) {

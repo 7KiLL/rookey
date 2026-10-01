@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use std::{env, fs, thread};
 
-use crate::Res;
+use crate::{Res, t};
 use crate::desktop::Chord;
 use crate::hold::{Hold, recording, toggle};
 use crate::mac;
@@ -157,18 +157,19 @@ pub fn access() -> Option<String> {
 }
 
 pub fn run() -> Res<()> {
-    let chord = crate::setting("ROOKEY_HOTKEY").ok_or("no ROOKEY_HOTKEY set, pick the keys in `rookey ui`")?;
+    let chord = crate::setting("ROOKEY_HOTKEY").ok_or_else(|| t!("listen.no-hotkey"))?;
     let chord = Chord::parse(&chord)?;
-    let key = key_code(chord.key()).ok_or_else(|| format!("rookey can't listen for {}, that key has no known code", chord.key()))?;
+    let key = key_code(chord.key()).ok_or_else(|| t!("server.key-unknown", key = chord.key()))?;
     // the tap needs Accessibility: ask, then wait for the switch rather than fail and restart
     if !mac::typing() {
-        eprintln!("rookey listen: allow {} under Privacy & Security > Accessibility", if mac::is_app() { "Rookey" } else { "this terminal" });
+        let who = if mac::is_app() { "Rookey".to_string() } else { t!("listen.this-terminal") };
+        eprintln!("{}", t!("listen.mac-allow", who = who));
         mac::ask_typing();
         while !fresh_typing() {
             thread::sleep(Duration::from_secs(2));
         }
     }
-    eprintln!("rookey listen: hold {chord} to talk, tap it to keep talking");
+    eprintln!("{}", t!("listen.started", chord = chord));
     // ponytail: no background updates here: this binary is Rookey's copy, and an update belongs
     // next to the rookey it was copied from, which puts a new copy here as it installs.
 
@@ -227,7 +228,7 @@ pub fn capture(wait: Duration) -> Res<Option<String>> {
         // the page runs in the terminal (ROOKEY_IN_TERMINAL): Rookey is asked all the same
         mac::as_app(&["__capture", &seconds], Some(wait + Duration::from_secs(5)))?
     };
-    let answer: serde_json::Value = serde_json::from_str(printed.trim()).map_err(|_| "Rookey didn't answer with the keys")?;
+    let answer: serde_json::Value = serde_json::from_str(printed.trim()).map_err(|_| t!("listen.mac-no-answer"))?;
     if let Some(why) = answer["error"].as_str() {
         return Err(why.into());
     }
@@ -238,7 +239,7 @@ pub fn capture(wait: Duration) -> Res<Option<String>> {
 fn capture_now(wait: Duration) -> Res<Option<String>> {
     if !mac::typing() {
         mac::ask_typing();
-        return Err("macOS doesn't let Rookey see the keys yet. Turn it on under Privacy & Security > Accessibility, then set the keys again.".into());
+        return Err(t!("listen.mac-no-keys").into());
     }
     let (tx, rx) = mpsc::channel();
     // the tap runs on a thread of its own until this process ends, which is right after
@@ -303,7 +304,7 @@ fn launchctl(args: &[&str]) -> Res<String> {
     let out = Command::new("launchctl").args(args).output()?;
     if !out.status.success() {
         let why = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("launchctl {} failed: {}", args[0], why.trim()).into());
+        return Err(t!("listen.tool-failed", tool = format!("launchctl {}", args[0]), why = why.trim()).into());
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -353,8 +354,8 @@ fn log_path() -> Option<PathBuf> {
 /// saved.
 pub fn start() -> Res<()> {
     let app = mac::place_app(&crate::exe()?)?;
-    let plist = plist_path().ok_or("no home folder for the launch agent")?;
-    let log = log_path().ok_or("no home folder for the log")?;
+    let plist = plist_path().ok_or_else(|| t!("listen.no-home"))?;
+    let log = log_path().ok_or_else(|| t!("listen.no-home"))?;
     let path = env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".into());
     fs::create_dir_all(plist.parent().unwrap())?;
     fs::write(&plist, agent(&mac::app_exe(&app), &path, &log))?;
