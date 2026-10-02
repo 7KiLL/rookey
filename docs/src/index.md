@@ -13,4 +13,4 @@ Hold a key, talk, let go: the words are typed into whatever window you are in. O
 - [Troubleshooting](./troubleshooting.md)
 - [Compared](./compared.md): the alternatives, and what a month costs
 
-Coding agents can read all of this through `rookey skills --install`.
+The skill for coding agents, `rookey skills --install`, points here as well.
