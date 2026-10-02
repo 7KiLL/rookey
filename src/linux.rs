@@ -271,7 +271,10 @@ fn paste(text: &str) -> Res<()> {
         // ponytail: the app reads the paste on its own time; 300 ms covers the usual ones, as
         // on macOS. Only text comes back, and the primary selection keeps the dictation.
         thread::sleep(Duration::from_millis(300));
-        copy(false, &saved)?;
+        // the text is in already: a clipboard that doesn't come back isn't a failed dictation
+        if let Err(e) = copy(false, &saved) {
+            vlog!(1, "typing: the clipboard didn't come back: {e}");
+        }
     }
     Ok(())
 }
