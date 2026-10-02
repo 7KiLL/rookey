@@ -49,6 +49,8 @@ mod history;
 mod hold;
 mod i18n;
 #[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
 mod listen;
 #[cfg(windows)]
 #[path = "listen_win.rs"]
@@ -384,6 +386,8 @@ fn finished(mode: Mode, done: &Res<String>) {
             status::failed(&e.to_string());
             if mode != Mode::Terminal && overlay::wanted() {
                 overlay::show(); // a hotkey has no terminal: the pill is where the reason shows
+            } else if mode == Mode::Toggle {
+                toast(&e.to_string(), overlay::FAILED_MS as u32); // or a notification, where it can't
             }
         }
     }
@@ -1108,8 +1112,8 @@ fn type_text(text: &str) -> Res<()> {
     }
     #[cfg(windows)]
     win::type_text(text)?;
-    #[cfg(not(any(target_os = "macos", windows)))]
-    Command::new("wtype").args(["--", text]).status()?;
+    #[cfg(target_os = "linux")]
+    linux::type_text(text)?;
     Ok(())
 }
 
@@ -1130,22 +1134,28 @@ fn notify(mode: Mode, msg: &str) {
         overlay::show();
     }
     // the page's test is watched on the page itself
-    if pill || mode == Mode::Page || setting("ROOKEY_NO_NOTIFICATIONS").is_some() {
+    if !pill && mode != Mode::Page {
+        toast(&t!(&format!("notify.{msg}")), 1500);
+    }
+}
+
+/// A desktop notification: what the pill says, where it can't show. Off with
+/// ROOKEY_NO_NOTIFICATIONS.
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+fn toast(text: &str, ms: u32) {
+    if setting("ROOKEY_NO_NOTIFICATIONS").is_some() {
         return;
     }
     #[cfg(target_os = "macos")]
     let _ = Command::new("osascript")
         .args([
             "-e",
-            &format!(
-                r#"display notification "{}" with title "rookey""#,
-                t!(&format!("notify.{msg}")).replace('"', "'")
-            ),
+            &format!(r#"display notification "{}" with title "rookey""#, text.replace('"', "'").replace('\n', " ")),
         ])
         .status();
     // ponytail: no toast on Windows, the sounds say it; a toast needs an app id registered first
     #[cfg(not(any(target_os = "macos", windows)))]
-    let _ = Command::new("notify-send").args(["-t", "1500", "rookey", &t!(&format!("notify.{msg}"))]).status();
+    let _ = Command::new("notify-send").args(["-t", &ms.to_string(), "rookey", text]).status();
 }
 
 #[cfg(test)]

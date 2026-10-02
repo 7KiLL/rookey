@@ -22,7 +22,7 @@ pub const H: u32 = 36;
 pub const MARGIN: i32 = 28;
 /// How long a failure stays on screen. The bar and `rookey status` keep it until the next
 /// recording; a pill over your work shouldn't.
-const FAILED_MS: u64 = 5000;
+pub const FAILED_MS: u64 = 5000;
 
 const INK: [f32; 3] = rgb(0x17231E);
 const PAPER: [f32; 3] = rgb(0xF6F9EF);
@@ -79,11 +79,11 @@ pub fn wanted() -> bool {
     if crate::setting("ROOKEY_NO_OVERLAY").is_some() {
         return false;
     }
+    // ponytail: no layer shell (GNOME, X11), no pill: the notification and sounds carry it there
     #[cfg(target_os = "linux")]
-    return std::env::var_os("WAYLAND_DISPLAY").is_some();
+    return crate::linux::layer_shell();
     #[cfg(any(windows, target_os = "macos"))]
     return true;
-    // ponytail: no pill on X11; the notification and sounds carry it there
     #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
     return false;
 }

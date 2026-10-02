@@ -46,7 +46,7 @@ What else each system needs:
 
 | System | Needs |
 |---|---|
-| Linux | A Wayland desktop and `wtype`, which types the text. For hold to talk, read access to `/dev/input`: the `input` group, or an ACL from your login manager |
+| Linux | A Wayland desktop and `wtype`, which types the text: niri, Hyprland, sway, COSMIC. GNOME and KDE don't let it type yet, so the text waits in `rookey history` there. For hold to talk, read access to `/dev/input`: the `input` group, or an ACL from your login manager |
 | macOS | Apple silicon. The settings page asks for the microphone, Accessibility (the hotkey and the typing), Automation of System Events (the paste) and, for screen terms, Screen Recording. macOS files them under *Rookey*, the small app rookey runs as, not under your terminal or your hotkey app |
 | Windows | 10 or 11, nothing else. The CUDA build brings its own runtime |
 
@@ -109,7 +109,7 @@ On macOS, bind it in skhd, Raycast or Shortcuts. The recording runs as Rookey, s
 
 ### How the text gets typed
 
-- **Linux**: `wtype`.
+- **Linux**: `wtype`, on the desktops that have the virtual-keyboard protocol it types through: niri, Hyprland, sway, COSMIC. If it can't type, `rookey status` says why.
 - **macOS**: pasted with Cmd+V through System Events, because typing keys mangles anything that isn't ASCII. The clipboard's text is put back 300 ms later (an image or files on it are lost); `ROOKEY_KEEP_CLIPBOARD=0` leaves the typed text on it instead.
 - **Windows**: Unicode key presses. A window running as administrator takes no input from rookey unless rookey runs as administrator too.
 
@@ -123,7 +123,7 @@ A small pill sits at the bottom of the screen while it listens (a level meter an
 - `ROOKEY_PILL_AT=x,y` moves it, in percent of the screen from the top left. `50,100`, the bottom centre, is the default.
 - `ROOKEY_NO_OVERLAY=1` turns it off.
 
-With the pill off, or on X11, a desktop notification says the same; `ROOKEY_NO_NOTIFICATIONS=1` turns those off too. GNOME has no layer shell, so it can't show the pill: set `ROOKEY_NO_OVERLAY=1` there to get the notifications. Windows has no notifications, only the sounds.
+Where the pill is off or can't show (GNOME and X11 have no layer shell), a desktop notification says the same, failures included; `ROOKEY_NO_NOTIFICATIONS=1` turns those off too. Windows has no notifications, only the sounds.
 
 ## Engines
 
@@ -307,7 +307,7 @@ On Linux, `journalctl --user -u rookey-listen -f` follows what the hotkey listen
 | "heard no words" | The wrong microphone, or it's muted. On macOS, microphone access may be off for Rookey |
 | It starts and stops at once, or records twice | `rookey listen` and a desktop bind of `rookey toggle` are on the same keys. Set the hotkey in `rookey ui`, which keeps one |
 | The hotkey does nothing on Linux | `rookey listen` can't read `/dev/input`. Join the `input` group (`sudo usermod -aG input $USER`) and log in again |
-| Nothing typed on Linux | `wtype` is missing, or the desktop isn't Wayland. `rookey history` has the text |
+| Nothing typed on Linux | `rookey status` says why: `wtype` is missing, the desktop isn't Wayland, or it is GNOME or KDE, which don't let it type yet. `rookey history` has the text |
 | Slow on `local` | A large model on a CPU build. Pick a smaller model in `rookey setup`, or `elevenlabs-realtime` |
 | Names and jargon come out wrong | Add them to `ROOKEY_WORDS`, or turn on `ROOKEY_CONTEXT=1` |
 

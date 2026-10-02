@@ -1245,7 +1245,7 @@ function ManualHotkey() {
         <pre><code>${() => MANUAL[id()].snippet}</code></pre>
         ${copyButton(() => MANUAL[id()].snippet)}
       </div>
-      <p class="hint">${() => t("hotkey.manual.wtype", { hint: t(`manual.${id()}`) })}</p>
+      <p class="hint">${() => (id() === "macos" ? t("manual.macos") : t("hotkey.manual.wtype", { hint: t(`manual.${id()}`) }))}</p>
     </div>`;
 }
 
