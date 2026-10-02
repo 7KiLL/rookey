@@ -50,4 +50,4 @@ site port="8089":
 
 # the docs, live-reloading, from docs/src
 docs:
-    cd docs && npm install --no-audit --no-fund && npx vitepress dev --host
+    cd docs && bun install && bun --bun run dev --host

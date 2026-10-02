@@ -1,11 +1,11 @@
 # rookey.click: the landing page, the docs and the install one-liners. Build from the repo root, so the
 # installers, fonts and docs come from where they live:  docker build -f site/Dockerfile .
-FROM node:22-alpine AS docs
+FROM oven/bun:1-alpine AS docs
 WORKDIR /docs
-COPY docs/package.json docs/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+COPY docs/package.json docs/bun.lock ./
+RUN bun install --frozen-lockfile
 COPY docs/ .
-RUN npm run build
+RUN bun --bun run build
 
 FROM nginx:stable-alpine
 COPY site/nginx.conf /etc/nginx/conf.d/default.conf
