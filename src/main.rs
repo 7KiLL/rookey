@@ -328,6 +328,9 @@ fn cli() -> Res<()> {
         #[cfg(windows)]
         let _ = fs::remove_file(stopfile());
         fs::write(&pidfile, std::process::id().to_string())?;
+        // only a toggle types: where that's a paste, the keys to press it are made meanwhile
+        #[cfg(target_os = "linux")]
+        linux::prepare();
     }
 
     let (stop_tx, stop_rx) = mpsc::channel();
@@ -1064,8 +1067,9 @@ fn transcribe(ctx: &WhisperContext, audio: &[f32], terms: &[String]) -> Res<Stri
     Ok(text.trim().to_string())
 }
 
-/// ROOKEY_KEEP_CLIPBOARD: on unless it is 0 or false, so typing on macOS puts your clipboard back.
-#[cfg(target_os = "macos")]
+/// ROOKEY_KEEP_CLIPBOARD: on unless it is 0 or false, so a paste (macOS, GNOME, KDE) puts your
+/// clipboard back.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn keep_clipboard() -> bool {
     let key = "ROOKEY_KEEP_CLIPBOARD";
     let raw = env::var(key).ok().or_else(|| CONFIG.read().unwrap().get(key).cloned());

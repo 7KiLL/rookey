@@ -57,8 +57,5 @@ case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) echo "note: $BIN_DIR is not on your PATH yet; add it to your shell's profile." ;;
 esac
-if [ "$(uname -s)" = Linux ] && ! command -v wtype >/dev/null 2>&1; then
-  echo "note: install wtype too, rookey types the text with it."
-fi
 echo
-echo "next: rookey setup   (checks your mic, then a speech model or an ElevenLabs key)"
+echo "next: rookey setup   (checks your mic and what typing needs on this desktop, then a speech model or an ElevenLabs key)"
