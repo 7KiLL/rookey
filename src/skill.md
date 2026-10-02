@@ -55,7 +55,7 @@ The settings people change most:
 | `ROOKEY_QUIET=1`, `ROOKEY_NO_OVERLAY=1`, `ROOKEY_NO_NOTIFICATIONS=1` | no sounds, no pill, no notifications |
 | `ROOKEY_AUTOUPDATE=0` | only says that a release is out |
 
-The README in the rookey repository lists every setting.
+Every setting is listed at https://rookey.click/docs/settings (docs/src/settings.md in the repository).
 
 ## When something goes wrong
 

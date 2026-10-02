@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>rookey demo frame</title>
+<style>
+@font-face { font-family: "Commissioner"; src: url("../../src/ui/commissioner-latin.woff2") format("woff2"); font-weight: 100 900; }
+@font-face { font-family: "Martian Mono"; src: url("../../src/ui/martian-mono-latin.woff2") format("woff2"); font-weight: 100 800; font-stretch: 75% 112.5%; }
+:root {
+  --paper: #E8EFDF; --raised: #F6F9EF; --wash: #F1F5E9; --ink: #17231E; --soft: #4A5B52; --rule: #B5C9B4;
+  --red: #C0342B;
+  --pill: #17231E; --pill-ink: #F6F9EF; --pill-ring: rgba(246,249,239,0.18); --pill-red: #E5584C;
+  --voice: "Commissioner", system-ui, sans-serif;
+  --keys: "Martian Mono", ui-monospace, monospace;
+}
+:root[data-theme="dark"] {
+  --paper: #121A16; --raised: #1B2621; --wash: #18221D; --ink: #E4ECDD; --soft: #9DB0A3; --rule: #2F4137;
+  --red: #F0645A;
+  --pill: #0B110E; --pill-ink: #E4ECDD; --pill-ring: rgba(228,236,221,0.22);
+}
+* { box-sizing: border-box; }
+/* frame-stepped: no wall-clock motion, every pixel comes from t */
+*, *::before, *::after { transition: none !important; }
+html, body { margin: 0; }
+body { width: 800px; height: 540px; background: var(--paper); color: var(--ink); font-family: var(--voice); font-size: 17px; line-height: 1.55; -webkit-font-smoothing: antialiased; padding: 20px; overflow: hidden; }
+.kicker { font-family: var(--keys); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--soft); }
+.soft { color: var(--soft); }
+p { margin: 0; }
+
+.pad { margin: 0; background: var(--wash); border-radius: 28px; overflow: hidden; height: 500px; display: grid; grid-template-rows: 64px 1fr 88px; }
+.pad-top { height: 64px; padding: 0 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-family: var(--keys); font-size: 13px; }
+.rec { display: flex; align-items: center; gap: 10px; color: var(--red); font-weight: 600; white-space: nowrap; }
+.rec::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--red); animation: blink 1.4s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: 0.3; } }
+kbd { font-size: 12px; padding: 4px 8px; border: 1px solid var(--ink); border-radius: 6px; box-shadow: 0 2px 0 var(--ink); background: var(--raised); color: var(--ink); white-space: nowrap; font-family: var(--keys); }
+.pad-col { display: grid; align-content: start; gap: 14px; min-height: 140px; padding: 28px 44px 12px; font-size: 19px; line-height: 1.6; }
+.pad-col:first-child { min-height: 168px; margin: 0 44px; padding: 20px 0 28px; border-bottom: 2px solid color-mix(in srgb, var(--red) 45%, transparent); }
+.pad-col p { grid-area: 2 / 1; }
+.pad-col p.off { visibility: hidden; }
+.pad-col.typed p { font-weight: 500; }
+.term { font-family: var(--keys); font-size: 15px; background: var(--paper); padding: 1px 6px; border-radius: 4px; }
+.caret { display: inline-block; width: 2px; height: 1.1em; background: var(--ink); vertical-align: -0.18em; margin-right: -2px; }
+.caret.off { background: transparent; }
+.pad-top .rec.idle, .pad-top .rec.trans { color: var(--soft); }
+.pad-top .rec.idle::before, .pad-top .rec.trans::before, .pad-top .rec.done::before { background: var(--soft); animation: none; }
+.pad-top .rec.done { color: var(--ink); }
+.keys { display: flex; align-items: center; gap: 6px; }
+.pad-top kbd.down { transform: translateY(2px); box-shadow: 0 0 0 var(--ink); background: var(--paper); }
+.pad .w { display: inline-block; margin-right: 0.28em; opacity: 0; transform: translateY(6px); text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: transparent; }
+.pad .w.on { opacity: 1; transform: none; }
+.pad .w.struck { color: var(--red); text-decoration-color: var(--red); }
+.pad .w.screen { border-bottom: 1.5px dotted var(--soft); }
+.pad .ahead { color: transparent; }
+.pad .term.ahead { background: transparent; }
+.pad.fading .pad-cols p { opacity: 0; }
+.edge { height: 88px; display: flex; align-items: center; justify-content: center; }
+.pill { display: inline-flex; align-items: center; gap: 10px; height: 36px; padding: 0 16px 0 14px; border-radius: 18px; background: var(--pill); color: var(--pill-ink); box-shadow: 0 0 0 1px var(--pill-ring); font-size: 13px; opacity: 0; transform: translateY(10px); }
+.pill:not([data-state="idle"]) { opacity: 1; transform: none; }
+.pill > span { display: none; align-items: center; gap: 10px; }
+.pill[data-state="rec"] .p-rec, .pill[data-state="trans"] .p-trans, .pill[data-state="done"] .p-done { display: inline-flex; }
+.p-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--pill-red); }
+.p-bars { display: flex; align-items: center; gap: 3px; height: 20px; }
+.p-bars i { width: 3px; height: 4px; border-radius: 2px; background: var(--pill-ink); }
+.p-clock { font-family: var(--keys); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.p-dots { display: flex; gap: 4px; }
+.p-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--pill-ink); animation: wave 1.1s ease-in-out infinite; }
+.p-dots i:nth-child(2) { animation-delay: 0.16s; } .p-dots i:nth-child(3) { animation-delay: 0.32s; }
+@keyframes wave { 0%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+.p-done svg { width: 16px; height: 16px; }
+</style>
+</head>
+<body>
+<figure class="pad" id="pad">
+  <div class="pad-top"><span class="rec idle" id="status">ready</span><span class="soft keys"><span>hold</span><kbd>Super</kbd><kbd>Shift</kbd><kbd>D</kbd></span></div>
+  <div class="pad-cols">
+    <div class="pad-col"><div class="kicker">You said</div></div>
+    <div class="pad-col typed"><div class="kicker">rookey typed</div></div>
+  </div>
+  <div class="edge">
+    <div class="pill" id="pill" data-state="idle">
+      <span class="p-rec"><span class="p-dot"></span><span class="p-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="p-clock">0:00</span></span>
+      <span class="p-trans"><span class="p-dots"><i></i><i></i><i></i></span>Transcribing</span>
+      <span class="p-done"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 5"/></svg><b style="font-weight:400"></b></span>
+    </div>
+  </div>
+</figure>
+<script>
+// the landing page's timeline, with draw(t) exposed and no clock: a script seeks it frame by frame
+if (new URLSearchParams(location.search).get("theme") === "dark") document.documentElement.dataset.theme = "dark";
+const script = [
+  { said: ["so um*", "can", "you", "push", "the", "fix", "to", "like*", "the", "main", "branch", "before", "uh*", "the", "standup"],
+    typed: [{ text: "Can you push the fix to the main branch before the standup?" }] },
+  { said: ["rename", "uh*", "use~", "settings~", "store~", "before", "the", "merge"],
+    typed: [{ text: "Rename " }, { text: "useSettingsStore", term: true }, { text: " before the merge." }] },
+];
+let t = 0;
+const steps = script.map((s) => {
+  const p = { s, press: t + 500 };
+  let w = p.press + 300;
+  p.words = s.said.map((tok) => { const at = w; w += 190 * tok.split(" ").length; return at; });
+  p.release = w + 250;
+  p.typeStart = p.release + 700;
+  p.chars = s.typed.reduce((n, g) => n + g.text.length, 0);
+  p.typeEnd = p.typeStart + p.chars * 24;
+  p.end = p.typeEnd + 1400;
+  p.count = s.typed.map((g) => g.text).join("").split(/\s+/).filter(Boolean).length;
+  t = p.end;
+  return p;
+});
+window.total = t + 1200;
+
+const pad = document.getElementById("pad");
+const [said, typed] = pad.querySelectorAll(".pad-col");
+const status = document.getElementById("status");
+const keys = pad.querySelectorAll(".pad-top kbd");
+const pill = document.getElementById("pill");
+const bars = pill.querySelectorAll(".p-bars i");
+const make = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || "", textContent: text || "" });
+const rows = steps.map((p) => {
+  const s = make("p"), y = make("p");
+  const words = p.s.said.map((tok) => s.appendChild(make("span", "w" + (tok.endsWith("~") ? " screen" : ""), tok.replace(/[*~]$/, ""))));
+  said.append(s);
+  typed.append(y);
+  return { said: s, words, typed: y, n: -1, caret: null };
+});
+
+window.draw = function draw(t) {
+  const live = steps.findIndex((p) => t < p.end);
+  const last = live < 0 ? steps.length - 1 : live;
+  const p = live < 0 ? null : steps[live];
+  const phase = !p || t < p.press ? "idle" : t < p.release ? "rec" : t < p.typeStart ? "trans" : "done";
+  const secs = p ? Math.max(0, Math.floor((t - p.press) / 1000)) : 0;
+  const clock = "0:" + String(secs).padStart(2, "0");
+  status.className = "rec " + phase;
+  status.textContent = { idle: "ready", rec: "recording " + clock, trans: "transcribing", done: "typed " + (p && p.count) + " words" }[phase];
+  keys.forEach((k) => k.classList.toggle("down", phase === "rec"));
+  pill.dataset.state = phase;
+  pill.querySelector(".p-clock").textContent = clock;
+  if (p) pill.querySelector(".p-done b").textContent = p.count + " words";
+  bars.forEach((b, k) => {
+    const level = phase === "rec" ? 0.3 + 0.7 * Math.abs(Math.sin(t / 140 + k * 1.3) * Math.sin(t / 410 + k * 0.7)) : 0;
+    b.style.height = Math.round(4 + 16 * level) + "px";
+  });
+  pad.classList.toggle("fading", t > total - 400);
+  steps.forEach((step, i) => {
+    const row = rows[i];
+    row.said.classList.toggle("off", i !== last);
+    row.typed.classList.toggle("off", i !== last);
+    step.words.forEach((at, k) => {
+      row.words[k].classList.toggle("on", t >= at);
+      row.words[k].classList.toggle("struck", step.s.said[k].endsWith("*") && t >= at + 420);
+    });
+    const n = Math.max(0, Math.min(step.chars, Math.floor((t - step.typeStart) / 24)));
+    const caret = i === last && t >= step.typeStart ? n < step.chars || Math.floor(t / 530) % 2 === 0 : null;
+    if (n === row.n && caret === row.caret) return;
+    row.n = n; row.caret = caret;
+    const out = [];
+    let left = n, placed = false;
+    step.s.typed.forEach((g, gi) => {
+      const shown = g.term ? (left > 0 ? g.text : "") : g.text.slice(0, Math.max(0, Math.min(left, g.text.length)));
+      const rest = g.text.slice(shown.length);
+      left -= g.text.length;
+      if (shown) out.push(g.term ? make("span", "term", shown) : document.createTextNode(shown));
+      if (!placed && (rest || gi === step.s.typed.length - 1)) {
+        placed = true;
+        if (caret !== null) out.push(make("span", "caret" + (caret ? "" : " off")));
+      }
+      if (rest) out.push(make("span", (g.term ? "term " : "") + "ahead", rest));
+    });
+    row.typed.replaceChildren(...out);
+  });
+  // the CSS animations (blink, wave) follow t too
+  document.getAnimations().forEach((a) => { a.pause(); a.currentTime = t; });
+};
+draw(0);
+</script>
+</body>
+</html>

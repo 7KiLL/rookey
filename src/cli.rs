@@ -154,7 +154,7 @@ fn settings_help() -> String {
   ROOKEY_AUTOUPDATE=0  only say that a release is out, don't install it
 
   ELEVENLABS_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY: for the ElevenLabs engine and the screen readers.
-  The README lists every setting.",
+  Every setting: https://rookey.click/docs/settings",
         config = shown(crate::config_path()),
         keys = shown(crate::keys_path()),
     )
