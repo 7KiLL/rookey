@@ -1,2 +1,7 @@
 target/
 .claude/worktrees/
+
+# docs site
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/

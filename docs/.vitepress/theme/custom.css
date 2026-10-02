@@ -1,0 +1,61 @@
+/* The landing page's steno pad on VitePress: green-tinted paper, ink, a proofreader's red.
+   The fonts are the ones nginx serves at /fonts/ for rookey.click; `vitepress dev` falls back to system fonts. */
+@font-face { font-family: "Commissioner"; src: url("/fonts/commissioner-latin.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Martian Mono"; src: url("/fonts/martian-mono-latin.woff2") format("woff2"); font-weight: 100 800; font-stretch: 75% 112.5%; font-display: swap; }
+
+:root {
+  --vp-font-family-base: "Commissioner", system-ui, sans-serif;
+  --vp-font-family-mono: "Martian Mono", ui-monospace, monospace;
+  --vp-code-font-size: 0.85em;
+
+  --vp-c-bg: #F6F9EF;
+  --vp-c-bg-alt: #E8EFDF;
+  --vp-c-bg-soft: #E8EFDF;
+  --vp-c-bg-elv: #F6F9EF;
+  --vp-c-text-1: #17231E;
+  --vp-c-text-2: #4A5B52;
+  --vp-c-text-3: #6E8276;
+  --vp-c-divider: #B5C9B4;
+  --vp-c-border: #B5C9B4;
+  --vp-c-gutter: #B5C9B4;
+
+  --vp-c-brand-1: #C0342B;
+  --vp-c-brand-2: #A32A22;
+  --vp-c-brand-3: #C0342B;
+  --vp-c-brand-soft: rgba(192, 52, 43, 0.12);
+
+  --vp-code-block-bg: #121A16;
+  --vp-code-color: #17231E;
+  --vp-code-bg: #E8EFDF;
+}
+
+.dark {
+  --vp-c-bg: #121A16;
+  --vp-c-bg-alt: #0B110E;
+  --vp-c-bg-soft: #1B2621;
+  --vp-c-bg-elv: #1B2621;
+  --vp-c-text-1: #E4ECDD;
+  --vp-c-text-2: #9DB0A3;
+  --vp-c-text-3: #7A8C82;
+  --vp-c-divider: #2F4137;
+  --vp-c-border: #2F4137;
+  --vp-c-gutter: #2F4137;
+
+  --vp-c-brand-1: #F0645A;
+  --vp-c-brand-2: #D9544B;
+  --vp-c-brand-3: #F0645A;
+  --vp-c-brand-soft: rgba(240, 100, 90, 0.16);
+
+  --vp-code-block-bg: #0B110E;
+  --vp-code-color: #E4ECDD;
+  --vp-code-bg: #1B2621;
+}
+
+/* Martian Mono is wide: the landing page narrows it the same way */
+.vp-doc :not(pre) > code, .vp-doc pre, .vp-doc kbd { font-stretch: 87.5%; }
+.vp-doc h1, .vp-doc h2 { letter-spacing: -0.025em; }
+.vp-doc h1 { font-weight: 800; }
+.vp-doc h2 { font-weight: 700; }
+/* a dark block on light paper needs a visible language label and copy button */
+.vp-doc [class*="language-"] > span.lang { color: #9DB0A3; }
+.vp-doc [class*="language-"] > button.copy { background-color: #1B2621; border-color: #2F4137; }

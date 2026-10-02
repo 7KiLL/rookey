@@ -47,3 +47,7 @@ logs:
 site port="8089":
     docker build -q -f site/Dockerfile -t rookey-site .
     docker run --rm -p {{port}}:80 rookey-site
+
+# the docs, live-reloading, from docs/src
+docs:
+    cd docs && npm install --no-audit --no-fund && npx vitepress dev --host

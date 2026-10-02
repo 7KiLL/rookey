@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <style>
+    .tile { fill: #17231E } .bar { fill: #E8EFDF } .eye { fill: #E5584C }
+    @media (prefers-color-scheme: dark) { .tile { fill: #E4ECDD } .bar { fill: #121A16 } .eye { fill: #C0342B } }
+  </style>
+  <rect class="tile" width="96" height="96" rx="22"/>
+  <rect class="bar" x="17" y="17" width="18" height="62" rx="9"/>
+  <rect class="bar" x="39" y="25" width="18" height="46" rx="9"/>
+  <rect class="bar" x="61" y="34" width="18" height="28" rx="9"/>
+  <circle class="eye" cx="26" cy="27" r="4.5"/>
+</svg>

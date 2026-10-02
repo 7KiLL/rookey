@@ -22,8 +22,9 @@
 - Never name other dictation products anywhere.
 
 ## Checklists
-- New setting: `SETTINGS` + `changes()` validation arm + test (`ui.rs`); `app.js` section + `locales/` words; README settings table, page order. Common setting: also `--help` list (`cli.rs`), `src/skill.md`.
-- New command: `src/skill.md` (test enforces), README Use section.
+- New setting: `SETTINGS` + `changes()` validation arm + test (`ui.rs`); `app.js` section + `locales/` words; `docs/src/settings.md` table, page order. Common setting: also `--help` list (`cli.rs`), `src/skill.md`.
+- New command: `src/skill.md` (test enforces), `docs/src/commands.md`.
+- README is the pitch, about 1,000 words: new reference goes in `docs/src/` (VitePress, `just docs`), never a new README section.
 - `listen.rs`, `listen_win.rs`, `listen_mac.rs` share function set: change together.
 
 ## Page (`src/ui/`)
